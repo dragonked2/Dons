@@ -1,8 +1,7 @@
+![380024582_904511401099198_7120165947283670814_n](https://github.com/dragonked2/Dons/assets/66541902/ad02ae1e-8f30-4ef3-ad35-95735f1cfeb7)
 
 ```markdown
 #Dons Secret Scanner 🕵️‍♂️
-
-
 
 
 **Unearth Secrets, Shield Treasures!**
