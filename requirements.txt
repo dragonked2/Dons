@@ -1,0 +1,5 @@
+aiohttp==3.8.1
+beautifulsoup4==4.10.0
+jsbeautifier==1.13.8
+requests==2.26.0
+rich==10.10.0
