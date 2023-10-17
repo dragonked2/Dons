@@ -117,7 +117,6 @@ regex_list = {
     ),
 }
 
-
 class SecretScanner:
     def __init__(self):
         self.console = Console()
@@ -242,23 +241,11 @@ class SecretScanner:
         except Exception as e:
             self.log_error(f"Error saving results to {output_file}", exception=e)
 
-    def run(self, start_url):
-        self.welcome_message()
-        loop = asyncio.get_event_loop()
-        try:
-            results = loop.run_until_complete(self.crawl_and_scan(start_url))
-            self.scan_complete_message()
-            if results:
-                self.save_results(results)
-        except Exception as e:
-            self.log_error(f"An unexpected error occurred", exception=e)
-
     def log_error(self, message, exception=None):
         if exception is not None:
             logger.error(f"{message}. Exception: {str(exception)}")
         else:
             logger.error(message)
-
 
 if __name__ == "__main__":
     try:
@@ -269,7 +256,9 @@ if __name__ == "__main__":
         ).upper()
         if mode == "S":
             start_url = input("Enter the starting URL to scan: ")
-            scanner.run(start_url)
+            scanner_results = asyncio.run(scanner.crawl_and_scan(start_url))
+            scanner.save_results(scanner_results)
+            scanner.scan_complete_message()
         elif mode == "L":
             file_path = input(
                 "Enter the path to the text file containing the list of websites: "
@@ -277,7 +266,9 @@ if __name__ == "__main__":
             with open(file_path, "r") as file:
                 websites = file.read().splitlines()
             for website in websites:
-                scanner.run(website)
+                scanner_results = asyncio.run(scanner.crawl_and_scan(website))
+                scanner.save_results(scanner_results)
+            scanner.scan_complete_message()
         else:
             print(
                 "Invalid mode. Please enter 'S' for a single website or 'L' for a list"
