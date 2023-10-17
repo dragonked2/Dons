@@ -6,7 +6,7 @@ from aiohttp import ClientSession
 from requests import get
 from requests.exceptions import RequestException
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlsplit
 from rich.console import Console
 from jsbeautifier import beautify
 from re import findall
@@ -141,33 +141,77 @@ class SecretScanner:
 
             self.scanned_urls.add(url)
 
-            response = get(url, timeout=30, allow_redirects=True)
-            content_type = response.headers.get("Content-Type", "").lower()
+            async with ClientSession() as session:
+                response = await session.get(url, timeout=30, allow_redirects=True)
+                content_type = response.headers.get("Content-Type", "").lower()
 
-            if "text/html" in content_type:
-                html_content = response.text
-                js_links = self.extract_js_links(html_content, url)
-                js_links = self.filter_external_links(url, js_links)
+                if "text/html" in content_type:
+                    html_content = await response.text()
+                    js_links = self.extract_js_links(html_content, url)
+                    js_links = self.filter_external_links(url, js_links)
 
-                self.console.print(
-                    f"\n[bold]Scanning {url} for sensitive information...[/bold]\n"
-                )
-                time.sleep(1)
-
-                results = self.scan_js_content(html_content, url)
-                link_results = await self.scan_js_links_async(js_links, url)
-                for link, result in zip(js_links, link_results):
                     self.console.print(
-                        f"\n[bold]Scanning {link} for sensitive information...[/bold]\n"
+                        f"\n[bold]Scanning {url} for sensitive information...[/bold]\n"
                     )
-                    results.extend(result)
+                    time.sleep(1)
 
-                return results
-            else:
-                self.console.print(
-                    f"[yellow]Skipping {url} (Not HTML content)[/yellow]"
-                )
+                    results = self.scan_js_content(html_content, url)
+                    link_results = await self.scan_js_links_async(js_links, url)
+                    for link, result in zip(js_links, link_results):
+                        self.console.print(
+                            f"\n[bold]Scanning {link} for sensitive information...[/bold]\n"
+                        )
+                        results.extend(result)
+
+                    return results
+                else:
+                    self.console.print(
+                        f"[yellow]Skipping {url} (Not HTML content)[/yellow]"
+                    )
+                    return []
+        except RequestException as e:
+            self.log_error(f"Error accessing {url}", exception=e)
+            return []
+        except Exception as e:
+            self.log_error(f"An unexpected error occurred", exception=e)
+            return []
+
+    async def crawl_and_scan_all_js(self, url):
+        try:
+            if url in self.scanned_urls:
                 return []
+
+            self.scanned_urls.add(url)
+
+            async with ClientSession() as session:
+                response = await session.get(url, timeout=30, allow_redirects=True)
+                content_type = response.headers.get("Content-Type", "").lower()
+
+                if "text/html" in content_type:
+                    html_content = await response.text()
+                    js_links = self.extract_js_links(html_content, url)
+                    js_links = self.filter_external_links(url, js_links)
+
+                    self.console.print(
+                        f"\n[bold]Scanning {url} for sensitive information...[/bold]\n"
+                    )
+                    time.sleep(1)
+
+                    results = self.scan_js_content(html_content, url)
+
+                    # Scan content of each JS file
+                    for js_link in js_links:
+                        js_url = urljoin(url, js_link)
+                        js_content = await self.fetch(js_url, session)
+                        js_results = self.scan_js_content(js_content, js_url)
+                        results.extend(js_results)
+
+                    return results
+                else:
+                    self.console.print(
+                        f"[yellow]Skipping {url} (Not HTML content)[/yellow]"
+                    )
+                    return []
         except RequestException as e:
             self.log_error(f"Error accessing {url}", exception=e)
             return []
@@ -226,7 +270,7 @@ if __name__ == "__main__":
         ).upper()
         if mode == "S":
             start_url = input("Enter the starting URL to scan: ")
-            scanner_results = asyncio.run(scanner.crawl_and_scan(start_url))
+            scanner_results = asyncio.run(scanner.crawl_and_scan_all_js(start_url))
             scanner.save_results(scanner_results)
             scanner.scan_complete_message()
         elif mode == "L":
@@ -236,7 +280,7 @@ if __name__ == "__main__":
             with open(file_path, "r") as file:
                 websites = file.read().splitlines()
             for website in websites:
-                scanner_results = asyncio.run(scanner.crawl_and_scan(website))
+                scanner_results = asyncio.run(scanner.crawl_and_scan_all_js(website))
                 scanner.save_results(scanner_results)
             scanner.scan_complete_message()
         else:
