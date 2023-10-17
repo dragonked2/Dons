@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 regex_list = {
-    "Google API": r"AIza[0-9A-Za-z-_]{35}",
+    "Google API Key": r"AIza[0-9A-Za-z\\-_]{35}",
     "Artifactory API Token": r'(?:\s|=|:|"|^)AKC[a-zA-Z0-9]{10,}',
     "Artifactory Password": r'(?:\s|=|:|"|^)AP[\dABCDEF][a-zA-Z0-9]{8,}',
     "Cloudinary Basic Auth": r"cloudinary:\/\/[0-9]{15}:[0-9A-Za-z]+@[a-z]+",
@@ -24,66 +24,42 @@ regex_list = {
     "Mailto String": r"(?<=mailto:)[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+",
     "Firebase URL": r".*firebaseio\.com",
     "PGP Private Key Block": r"-----BEGIN PGP PRIVATE KEY BLOCK-----",
-    "SSH (DSA) Private Key": r"-----BEGIN DSA PRIVATE KEY-----",
-    "SSH (EC) Private Key": r"-----BEGIN EC PRIVATE KEY-----",
-    "SSH (RSA) Private Key": r"-----BEGIN OPENSSH PRIVATE KEY-----",
+    "SSH Private Key": r"-----BEGIN (?:DSA|EC|OPENSSH|RSA) PRIVATE KEY-----",
     "SSH (ssh-ed25519) Public Key": r"ssh-ed25519",
     "Google Captcha Key": r"6L[0-9A-Za-z-_]{38}|^6[0-9a-zA-Z_-]{39}$",
     "Amazon AWS Access Key ID": r"AKIA[0-9A-Z]{16}",
-    "Amazon MWS Auth Token": (
-        r"amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-    ),
+    "Amazon MWS Auth Token": r"amzn\\.mws\\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     "Amazon AWS API Key": r"AKIA[0-9A-Z]{16}",
-    "Amazon AWS URL": r"s3\.amazonaws.com[/]+|[a-zA-Z0-9_-]*\.s3\.amazonaws.com",
+    "Amazon AWS URL": r"s3\.amazonaws\.com(?:[/]+|[a-zA-Z0-9_-]*\.s3\.amazonaws\.com)",
     "Generic API Key": r"(?i)api[_]?key.*['|\"]\w{32,45}['|\"]",
     "Generic Secret": r"(?i)secret.*['|\"]\w{32,45}['|\"]",
-    "Authorization Bearer": r"bbearer [a-zA-Z0-9_\\-\\.=]+",
+    "Authorization Bearer": r"bearer [a-zA-Z0-9_\\-\\.=]+",
     "Authorization Basic": r"basic [a-zA-Z0-9=:_\+\/-]{5,100}",
     "Authorization API Key": r"api[key|_key|\s+]+[a-zA-Z0-9_\-]{5,100}",
-    "PayPal Braintree Access Token": (
-        r"access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}"
-    ),
+    "PayPal Braintree Access Token": r"access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32}",
     "Mailgun API Key": r"key-[0-9a-zA-Z]{32}",
     "MailChimp API Key": r"[0-9a-f]{32}-us[0-9]{1,2}",
     "RSA Private Key": r"-----BEGIN RSA PRIVATE KEY-----",
-    "Heroku API Key": (
-        r"(?i)heroku.*[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"
-    ),
+    "Heroku API Key": r"(?i)heroku.*[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}",
     "JWT Token": r"ey[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$",
     "Facebook Access Token": r"EAACEdEose0cBA[0-9A-Za-z]+",
     "Facebook OAuth": r"(?i)facebook.*['|\"][0-9a-f]{32}['|\"]",
     "Google OAuth": r"ya29\.[0-9A-Za-z\-_]+",
-    "Facebook Client ID": r"""(?i)(facebook|fb)(.{0,20})?['\"][0-9]{13,17}""",
-    "Google Cloud Platform API Key": (
-        r"(?i)\b(AIza[0-9A-Za-z\\-_]{35})(?:['|\"|\n|\r|\s|\x60]|$)"
-    ),
-    "Google Cloud Platform OAuth": (
-        r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com"
-    ),
+    "Facebook Client ID": r"(?i)(facebook|fb)(.{0,20})?['\"][0-9]{13,17}",
+    "Google Cloud Platform API Key": r"(?i)\bAIza[0-9A-Za-z\\-_]{35}\b",
+    "Google Cloud Platform OAuth": r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com",
     "Google Drive API Key": r"AIza[0-9A-Za-z-_]{35}",
-    "Google Drive OAuth": (
-        r"(?i)client.*(['\"]).*?client_id['\"]\s*:\s*['\"](.*?)[0-9]-[a-z]{16}['\"]"
-    ),
+    "Google Drive OAuth": r"(?i)client.*(['\"]).*?client_id['\"]\s*:\s*['\"](.*?)[0-9]-[a-z]{16}['\"]",
     "Google Gmail API Key": r"AIza[0-9A-Za-z-_]{35}",
-    "Google Gmail OAuth": (
-        r"(?i)client.*(['\"]).*?client_id['\"]\s*:\s*['\"](.*?)[0-9]-[a-z]{16}['\"]"
-    ),
+    "Google Gmail OAuth": r"(?i)client.*(['\"]).*?client_id['\"]\s*:\s*['\"](.*?)[0-9]-[a-z]{16}['\"]",
     "Google Maps API Key": r"AIza[0-9A-Za-z-_]{35}",
-    "Google Maps OAuth": (
-        r"(?i)client.*(['\"]).*?client_id['\"]\s*:\s*['\"](.*?)[0-9]-[a-z]{16}['\"]"
-    ),
+    "Google Maps OAuth": r"(?i)client.*(['\"]).*?client_id['\"]\s*:\s*['\"](.*?)[0-9]-[a-z]{16}['\"]",
     "Google Play Android Developer API Key": r"AIza[0-9A-Za-z-_]{35}",
-    "Google Play Android Developer OAuth": (
-        r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com"
-    ),
+    "Google Play Android Developer OAuth": r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com",
     "Google Play Services API Key": r"AIza[0-9A-Za-z-_]{35}",
-    "Google Play Services OAuth": (
-        r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com"
-    ),
+    "Google Play Services OAuth": r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com",
     "Google Street View Image API Key": r"AIza[0-9A-Za-z-_]{35}",
-    "Google Street View Image OAuth": (
-        r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com"
-    ),
+    "Google Street View Image OAuth": r"[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com",
     "Slack API Key": r"(?i)slack.*['|\"][0-9a-zA-Z-]+['|\"]",
     "Stripe Standard API Key": r"sk_live_[0-9a-zA-Z]{24}",
     "Stripe Restricted API Key": r"rk_live_[0-9a-zA-Z]{24}",
@@ -101,21 +77,15 @@ regex_list = {
     "Reddit Client ID": r"(?i)reddit(.{0,20})?['\"][0-9a-zA-Z-_]{14}['\"]",
     "Instagram Access Token": r"(?i)instagram(.{0,20})?['\"][0-9a-zA-Z-_]{7}['\"]",
     "Foursquare API Key": r"(?i)foursquare.*['|\"][0-9a-zA-Z]{48}['|\"]",
-    "OpenID Connect Generic Provider API Key": (
-        r"['|\"]?authorization_endpoint['|\"](.{1,50})?['|\"](.*?)[a-z0-9_-]+['|\"]"
-    ),
+    "OpenID Connect Generic Provider API Key": r"['|\"]?authorization_endpoint['|\"](.{1,50})?['|\"](.*?)[a-z0-9_-]+['|\"]",
     "Generic OAuth 2.0": r"(?i)(oauth|open\W*source).*['|\"]?([a-z0-9_-]+)['|\"]",
     "Bearer Token": r"['|\"]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
-    "Basic Auth Credentials": (
-        r"(?i)basic.*['|\"]?[a-zA-Z0-9-_]+['|\"]?:['|\"]?[a-zA-Z0-9-_]+['|\"]?"
-    ),
-    "Generic API Token": (
-        r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?"
-    ),
-    "Generic API Secret": (
-        r"['|\"]?api[_]?secret['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?"
-    ),
+    "Basic Auth Credentials": r"(?i)basic.*['|\"]?[a-zA-Z0-9-_]+['|\"]?:['|\"]?[a-zA-Z0-9-_]+['|\"]?",
+    "Generic API Token": r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "Generic API Secret": r"['|\"]?api[_]?secret['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
 }
+
+
 
 class SecretScanner:
     def __init__(self):
@@ -185,7 +155,6 @@ class SecretScanner:
                 time.sleep(1)
 
                 results = self.scan_js_content(html_content, url)
-                loop = asyncio.get_event_loop()
                 link_results = await self.scan_js_links_async(js_links, url)
                 for link, result in zip(js_links, link_results):
                     self.console.print(
@@ -250,6 +219,7 @@ class SecretScanner:
 if __name__ == "__main__":
     try:
         scanner = SecretScanner()
+        scanner.welcome_message()
         mode = input(
             "Do you want to scan a single website (S) or a list of websites from a file"
             " (L)? "
