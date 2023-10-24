@@ -1,13 +1,14 @@
-import asyncio
 import os
-import time
-from urllib.parse import urljoin, urlparse
 import re
+import time
+import asyncio
+import concurrent.futures
+from urllib.parse import urljoin, urlparse
+from aiohttp import ClientSession, ClientResponseError
 from bs4 import BeautifulSoup
-from aiohttp import ClientSession
-from aiohttp.client_exceptions import ClientResponseError
-from loguru import logger
+from rich import print
 from rich.console import Console
+from rich.markup import MarkupError
 
 regex_list = {
     "Google API Key": r"AIza[0-9A-Za-z\\-_]{35}",
@@ -70,11 +71,9 @@ regex_list = {
     "Pinterest OAuth Token": r"(?i)pinterest.*['|\"]\w{32}['|\"]",
     "Salesforce API Token": r"(?i)salesforce.*['|\"]\w{300}['|\"]",
     "Stripe Connect API Token": r"(?i)stripe.*['|\"]rk_acct_[0-9a-zA-Z]{24}['|\"]",
-    "Twitch API Token": r"(?i)twitch.*['|\"]\w{30}['|\"]",
     "Yammer API Token": r"(?i)yammer.*['|\"]\w{48}['|\"]",
     "Facebook App Token": r"(?i)facebook.*['|\"]\w{140}['|\"]",
     "Facebook App Secret": r"(?i)facebook.*['|\"]\w{32}['|\"]",
-    "Google Tag Manager Container ID": r"GTM-[A-Z0-9]{6}",
     "Yelp Fusion API Key": r"(?i)yelp.*['|\"]\w{32}['|\"]",
     "GitKraken OAuth Token": r"(?i)gitkraken.*['|\"]\w{64}['|\"]",
     "Dropbox API Token": r"(?i)dropbox.*['|\"]\w{64}['|\"]",
@@ -86,7 +85,6 @@ regex_list = {
     "Twilio Auth Token": r"(?i)twilio.*['|\"]\w{32}['|\"]",
     "PagerDuty API Key": r"(?i)pagerduty.*['|\"]\w{20}['|\"]",
     "SendGrid API Key": r"(?i)sendgrid.*['|\"]\w{68}['|\"]",
-    "Google Analytics Tracking ID": r"UA-\d{4,10}-\d{1,4}",
     "Mixpanel API Key": r"(?i)mixpanel.*['|\"]\w{32}['|\"]",
     "AWS Cognito ID Token": r"(?i)cognito.*['|\"]\w{115}['|\"]",
     "AWS Cognito Refresh Token": r"(?i)cognito.*['|\"]\w{110}['|\"]",
@@ -160,20 +158,33 @@ regex_list = {
     "Database Port": r"['|\"]?database[_]?port['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
 }
 
+result_style = "bold green"
+error_style = "bold red"
+warning_style = "bold yellow"
+match_style = "bold red"
+js_file_style = "cyan"
 
+ascii_art_logo = """
+ ██████  ███████  ██████  ███    ██ ███████ ██████  
+██    ██ ██      ██    ██ ████   ██ ██      ██   ██ 
+██    ██ █████   ██████  ██ ██  ██ █████   ██████  
+██    ██ ██      ██    ██ ██  ██ ██ ██      ██   ██ 
+ ██████  ███████  ██████  ██   ████ ███████ ██   ██ 
+"""
+
+console = Console()
 
 class SecretScanner:
     TEXT_HTML = "text/html"
 
     def __init__(self):
-        self.console = Console()
         self.scanned_urls = set()
 
     def display_result(self, key, link, matches, js_file=None):
-        self.console.print(f"\n[bold green][+] {key} found in {link}[/bold green]")
+        print(f"[{result_style}][+] {key} found in {link}[/{result_style}]")
         if js_file:
-            self.console.print(f"[cyan]Found in JavaScript file:[/cyan] {js_file}")
-        self.console.print(f"[red]Matches:[/red] {matches}\n")
+            print(f"[{js_file_style}]Found in JavaScript file:[/{js_file_style}] {js_file}")
+        print(f"[{match_style}]Matches:[/{match_style}] {matches}\n")
 
     def scan_js_content(self, content, link, js_file=None):
         results = []
@@ -228,7 +239,7 @@ class SecretScanner:
                     js_links = self.extract_js_links(html_content, url)
                     js_links = self.filter_external_links(url, js_links)
 
-                    self.console.print(f"\n[bold]Scanning {url} for sensitive information...[/bold]\n")
+                    print(f"[{result_style}]Scanning {url} for sensitive information...[/{result_style}]")
 
                     results = self.scan_js_content(html_content, url)
 
@@ -239,7 +250,7 @@ class SecretScanner:
 
                     return results
                 else:
-                    self.console.print(f"[yellow]Skipping {url} (Not HTML content)[/yellow]")
+                    print(f"[{warning_style}]Skipping {url} (Not HTML content)[/{warning_style}]")
                     return []
         except ClientResponseError as e:
             self.log_error(f"Error accessing {url}", exception=e)
@@ -247,32 +258,23 @@ class SecretScanner:
         except Exception as e:
             self.log_error(f"An unexpected error occurred", exception=e)
 
-    def welcome_message(self):
-        ascii_art_logo = """
-
-
-██████   ██████  ███    ██ ███████          ██ ███████     ███████  ██████  █████  ███    ██ ███    ██ ███████ ██████  
-██   ██ ██    ██ ████   ██ ██               ██ ██          ██      ██      ██   ██ ████   ██ ████   ██ ██      ██   ██ 
-██   ██ ██    ██ ██ ██  ██ ███████          ██ ███████     ███████ ██      ███████ ██ ██  ██ ██ ██  ██ █████   ██████  
-██   ██ ██    ██ ██  ██ ██      ██     ██   ██      ██          ██ ██      ██   ██ ██  ██ ██ ██  ██ ██ ██      ██   ██ 
-██████   ██████  ██   ████ ███████      █████  ███████     ███████  ██████ ██   ██ ██   ████ ██   ████ ███████ ██   ██ 
-                                                                                                                       
-                                                                                                                       
-
-
-        """
-        self.console.print(f"[bold magenta]{ascii_art_logo}[/bold magenta]")
-        self.console.print("[cyan][bold]Welcome to the Secret Scanner![/bold][/cyan]\n")
-        self.console.print("This tool scans JavaScript files for sensitive information.")
-        self.console.print("It can find API keys, credentials, and other secrets embedded in the code.\n")
-
-    def scan_complete_message(self):
-        self.console.print("[cyan][bold]Scan complete![/bold][/cyan]")
-        self.console.print("Thank you for using the Secret Scanner.")
+    async def scan_multiple_websites(self, websites):
+        results = []
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_to_website = {executor.submit(self.crawl_and_scan_all_js, website): website for website in websites}
+            for future in concurrent.futures.as_completed(future_to_website):
+                website = future_to_website[future]
+                try:
+                    scanner_results = future.result()
+                    results.extend(scanner_results)
+                    print(f"[{result_style}][bold]Scan of {website} complete![/{result_style}][/bold]")
+                except Exception as e:
+                    self.log_error(f"An unexpected error occurred while scanning {website}", exception=e)
+        return results
 
     def save_results(self, results, output_dir="scan_results"):
         if results is None:
-            self.console.print("[yellow]No results to save.[/yellow]")
+            print(f"[{warning_style}]No results to save.[/{warning_style}]")
             return
 
         os.makedirs(output_dir, exist_ok=True)
@@ -282,35 +284,40 @@ class SecretScanner:
             with open(output_file, "w", encoding="utf-8") as f:
                 for result in results:
                     f.write(result + "\n")
-            self.console.print(f"[cyan]Results saved to {output_file}[/cyan]")
+            print(f"[{result_style}]Results saved to {output_file}[/{result_style}]")
         except Exception as e:
             self.log_error(f"Error saving results to {output_file}", exception=e)
 
     def log_error(self, message, exception=None):
-        if exception is not None:
-            logger.error(f"{message}. Exception: {str(exception)}")
-        else:
-            logger.error(message)
+        try:
+            if exception is not None:
+                print(f"[{error_style}]{message}. Exception: {str(exception)}[/{error_style}]")
+            else:
+                print(f"[{error_style}]{message}[/{error_style}]")
+        except MarkupError:
+            print(f"An error occurred: {str}(exception)")
 
 if __name__ == "__main__":
     try:
+        print(ascii_art_logo)
         scanner = SecretScanner()
-        scanner.welcome_message()
         mode = input("Do you want to scan a single website (S) or a list of websites from a file (L)? ").upper()
         if mode == "S":
             start_url = input("Enter the starting URL to scan: ")
+            print(f"[{result_style}][bold]Starting scan...[/{result_style}][/bold]")
             scanner_results = asyncio.run(scanner.crawl_and_scan_all_js(start_url))
             scanner.save_results(scanner_results)
-            scanner.scan_complete_message()
+            print(f"[{result_style}][bold]Scan complete![/{result_style}][/bold]")
         elif mode == "L":
             file_path = input("Enter the path to the text file containing the list of websites: ")
             with open(file_path, "r") as file:
                 websites = file.read().splitlines()
+            print(f"[{result_style}][bold]Starting scans...[/{result_style}][/bold]")
             for website in websites:
                 scanner_results = asyncio.run(scanner.crawl_and_scan_all_js(website))
                 scanner.save_results(scanner_results)
-            scanner.scan_complete_message()
+            print(f"[{result_style}][bold]Scan complete![/{result_style}][/bold]")
         else:
-            print("Invalid mode. Please enter 'S' for a single website or 'L' for a list of websites.")
+            print(f"[{error_style}]Invalid mode. Please enter 'S' for a single website or 'L' for a list of websites.[/{error_style}]")
     except Exception as e:
         scanner.log_error(f"An unexpected error occurred", exception=e)
