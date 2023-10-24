@@ -1,18 +1,13 @@
 import asyncio
 import os
-import logging
 import time
-from aiohttp import ClientSession
-from requests import get
-from requests.exceptions import RequestException
+from urllib.parse import urljoin, urlparse
+import re
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse, urlsplit
+from aiohttp import ClientSession
+from aiohttp.client_exceptions import ClientResponseError
+from loguru import logger
 from rich.console import Console
-from jsbeautifier import beautify
-from re import findall
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 regex_list = {
     "Google API Key": r"AIza[0-9A-Za-z\\-_]{35}",
@@ -41,20 +36,15 @@ regex_list = {
     "YouTube API Key": r"AIza[0-9A-Za-z-_]{35}",
     "Reddit Client ID": r"(?i)reddit(.{0,20})?['\"][0-9a-zA-Z-_]{14}['\"]",
     "Instagram Access Token": r"(?i)instagram(.{0,20})?['\"][0-9a-zA-Z-_]{7}['\"]",
-    "Generic OAuth 2.0 Token": r"(?i)(oauth|open\W*source).*['|\"]?([a-z0-9_-]+)['|\"]",
-    "Bearer Token": r"['|\"]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Docker Registry Token": r"(?i)docker[^\s]*?['|\"]\w{32,64}['|\"]",
     "GitHub Personal Access Token": r"[a-f0-9]{40}",
     "GitLab Personal Access Token": r"(?i)gitlab.*['|\"]\w{20,40}['|\"]",
-    "Amazon SES SMTP Password": r"[a-zA-Z0-9_-]{16,}",
     "JIRA API Token": r"(?i)jira.*['|\"]\w{16}['|\"]",
     "Azure Key Vault Secret Identifier": r"https:\/\/[a-z0-9-]+\.vault\.azure\.net\/secrets\/[a-zA-Z0-9-]+\/[a-zA-Z0-9-]+",
-    "Salesforce Access Token": r"[a-zA-Z0-9\.\-]{100,}",
     "Trello API Key": r"(?i)trello.*['|\"]\w{32}['|\"]",
     "Atlassian API Key": r"(?i)atlassian.*['|\"]\w{32}['|\"]",
     "OAuth 2.0 Bearer Token": r"(?i)bearer[^\s]*?['|\"]\w{32,64}['|\"]",
     "Zoom API Key": r"(?i)zoom.*['|\"]\w{22}['|\"]",
-    "Box API Key": r"(?i)box.*['|\"]\w{30}['|\"]",
     "Shopify API Key": r"(?i)shopify.*['|\"]\w{32}['|\"]",
     "Zendesk API Token": r"(?i)zendesk.*['|\"]\w{40}['|\"]",
     "Square Access Token": r"(?i)square.*['|\"]\w{64}['|\"]",
@@ -68,7 +58,6 @@ regex_list = {
     "Hootsuite API Token": r"(?i)hootsuite.*['|\"]\w{12}['|\"]",
     "Oracle Cloud API Key": r"[a-zA-Z0-9]{64}",
     "Sentry API Key": r"(?i)sentry.*['|\"]\w{32}['|\"]",
-    "Box API Secret": r"(?i)box.*['|\"]\w{40}['|\"]",
     "DigitalOcean API Token": r"([a-f0-9]{64})",
     "Mailjet API Token": r"(\w{32}-\w{13})",
     "Twitch Client ID": r"(?i)twitch(.{0,20})?['\"][0-9a-z]{30}['\"]",
@@ -83,7 +72,6 @@ regex_list = {
     "Yammer OAuth Token": r"(?i)yammer.*['|\"]\w{48}['|\"]",
     "Medium Integration Token": r"(?i)medium.*['|\"]\w{100}['|\"]",
     "Coinbase OAuth Token": r"(?i)coinbase.*['|\"]\w{45}['|\"]",
-    "Slack Bot Token": r"([a-zA-Z0-9-]+)",
     "Microsoft Office 365 API Token": r"(?i)microsoft.*['|\"]\w{360}['|\"]",
     "Pinterest OAuth Token": r"(?i)pinterest.*['|\"]\w{32}['|\"]",
     "Salesforce API Token": r"(?i)salesforce.*['|\"]\w{300}['|\"]",
@@ -96,12 +84,10 @@ regex_list = {
     "Facebook App Secret": r"(?i)facebook.*['|\"]\w{32}['|\"]",
     "Google Tag Manager Container ID": r"GTM-[A-Z0-9]{6}",
     "Yelp Fusion API Key": r"(?i)yelp.*['|\"]\w{32}['|\"]",
-    "Apple Sign-In Key": r"(?i)apple.*['|\"]\w{10}['|\"]",
     "GitKraken OAuth Token": r"(?i)gitkraken.*['|\"]\w{64}['|\"]",
     "Dropbox API Token": r"(?i)dropbox.*['|\"]\w{64}['|\"]",
     "Auth0 API Token": r"(?i)auth0.*['|\"]\w{16}['|\"]",
     "Wix API Key": r"(?i)wix.*['|\"]\w{32}['|\"]",
-    "Zoom JWT API Key": r"([a-zA-Z0-9-_.]+)\.[a-zAZ0-9-_.]+\.([a-zA-Z0-9-_.]+)",
     "Okta API Token": r"(?i)okta.*['|\"]\w{50}['|\"]",
     "Keybase PGP Key": r"(?i)keybase.*['|\"]\w{64}['|\"]",
     "HashiCorp Vault Token": r"(?i)vault.*['|\"]\w{64}['|\"]",
@@ -110,8 +96,6 @@ regex_list = {
     "SendGrid API Key": r"(?i)sendgrid.*['|\"]\w{68}['|\"]",
     "Google Analytics Tracking ID": r"UA-\d{4,10}-\d{1,4}",
     "Mixpanel API Key": r"(?i)mixpanel.*['|\"]\w{32}['|\"]",
-    "Segment API Key": r"(?i)segment.*['|\"]\w{50}['|\"]",
-    "AWS IAM Access Key": r"A[A-Z0-9]{18}",
     "AWS IAM Secret Key": r"(?i)aws.*['|\"]\w{40}['|\"]",
     "AWS Cognito ID Token": r"(?i)cognito.*['|\"]\w{115}['|\"]",
     "AWS Cognito Refresh Token": r"(?i)cognito.*['|\"]\w{110}['|\"]",
@@ -120,7 +104,6 @@ regex_list = {
     "Adobe Marketing Cloud API Key": r"(?i)adobe.*['|\"]\w{24}['|\"]",
     "OneLogin API Token": r"(?i)onelogin.*['|\"]\w{40}['|\"]",
     "Auth0 Client Secret": r"(?i)auth0.*['|\"]\w{40}['|\"]",
-    "DigitalOcean OAuth Token": r"(?i)do.*['|\"]\w{32}['|\"]",
     "PubNub API Key": r"(?i)pubnub.*['|\"]\w{40}['|\"]",
     "Fortnite Client ID": r"(?i)fortnite.*['|\"]\w{32}['|\"]",
     "Fortnite Client Secret": r"(?i)fortnite.*['|\"]\w{64}['|\"]",
@@ -130,7 +113,6 @@ regex_list = {
     "Stoplight API Key": r"(?i)stoplight.*['|\"]\w{36}['|\"]",
     "42Crunch API Key": r"(?i)42crunch.*['|\"]\w{64}['|\"]",
     "Prometheus API Key": r"(?i)prometheus.*['|\"]\w{16}['|\"]",
-    "IBM Cloud API Key": r"(?i)ibm.*['|\"]\w{44}['|\"]",
     "Imgur Client ID": r"(?i)imgur.*['|\"]\w{12}['|\"]",
     "Clarifai API Key": r"(?i)clarifai.*['|\"]\w{24}['|\"]",
     "Twillio API Key": r"(?i)twillio.*['|\"]\w{32}['|\"]",
@@ -164,7 +146,6 @@ regex_list = {
     "PubNub API Key": r"(?i)pubnub.*['|\"]\w{32}['|\"]",
     "Twitter API Key": r"(?i)twitter.*['|\"]\w{35,44}['|\"]",
     "Nexmo API Key": r"(?i)nexmo.*['|\"]\w{32}['|\"]",
-    "Lob API Key": r"(?i)lob.*['|\"]\w{40}['|\"]",
     "Spotify Client ID": r"(?i)spotify.*['|\"]\w{32}['|\"]",
     "Stripe API Key": r"(?i)stripe.*['|\"]\w{24}['|\"]",
     "Google Maps API Key": r"(?i)google.*['|\"]\w{39}['|\"]",
@@ -176,7 +157,6 @@ regex_list = {
     "AWS IAM Secret Key": r"(?i)aws.*['|\"]\w{40}['|\"]",
     "Twilio API Key": r"(?i)twilio.*['|\"]\w{32}['|\"]",
     "Firebase Cloud Messaging (FCM) Key": r"AAAA[a-zA-Z0-9_-]{140,340}",
-    "OAuth 2.0 Access Token": r"(?i)access[^\s]*?['|\"]\w{16,64}['|\"]",
     "Basic Authentication": r"Basic\s[A-Za-z0-9_\-]+=*",
     "Bearer Token": r"['|\"]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "API Token": r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
@@ -188,10 +168,9 @@ regex_list = {
     "Refresh Token": r"['|\"]?refresh[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
 }
 
-
-
-
 class SecretScanner:
+    TEXT_HTML = "text/html"
+
     def __init__(self):
         self.console = Console()
         self.scanned_urls = set()
@@ -203,10 +182,9 @@ class SecretScanner:
         self.console.print(f"[red]Matches:[/red] {matches}\n")
 
     def scan_js_content(self, content, link, js_file=None):
-        content = beautify(content)
         results = []
         for key, pattern in regex_list.items():
-            matches = findall(pattern, content)
+            matches = re.findall(pattern, content)
             if matches:
                 self.display_result(key, link, matches, js_file=js_file)
                 results.append(f"{key} found in {link}: {matches}")
@@ -233,7 +211,6 @@ class SecretScanner:
             if src:
                 js_links.add(urljoin(base_url, src))
             else:
-                # Inline JavaScript
                 self.scan_js_content(script.text, base_url)
         return list(js_links)
 
@@ -254,19 +231,15 @@ class SecretScanner:
                 response = await session.get(url, timeout=30, allow_redirects=True)
                 content_type = response.headers.get("Content-Type", "").lower()
 
-                if "text/html" in content_type:
+                if self.TEXT_HTML in content_type:
                     html_content = await response.text()
                     js_links = self.extract_js_links(html_content, url)
                     js_links = self.filter_external_links(url, js_links)
 
-                    self.console.print(
-                        f"\n[bold]Scanning {url} for sensitive information...[/bold]\n"
-                    )
-                    time.sleep(1)
+                    self.console.print(f"\n[bold]Scanning {url} for sensitive information...[/bold]\n")
 
                     results = self.scan_js_content(html_content, url)
 
-                    # Scan content of each JS file
                     for js_link in js_links:
                         js_content = await self.fetch(js_link, session)
                         js_results = self.scan_js_content(js_content, js_link)
@@ -274,16 +247,13 @@ class SecretScanner:
 
                     return results
                 else:
-                    self.console.print(
-                        f"[yellow]Skipping {url} (Not HTML content)[/yellow]"
-                    )
+                    self.console.print(f"[yellow]Skipping {url} (Not HTML content)[/yellow]")
                     return []
-        except RequestException as e:
+        except ClientResponseError as e:
             self.log_error(f"Error accessing {url}", exception=e)
             return []
         except Exception as e:
             self.log_error(f"An unexpected error occurred", exception=e)
-            return []
 
     def welcome_message(self):
         ascii_art_logo = """
@@ -309,6 +279,10 @@ class SecretScanner:
         self.console.print("Thank you for using the Secret Scanner.")
 
     def save_results(self, results, output_dir="scan_results"):
+        if results is None:
+            self.console.print("[yellow]No results to save.[/yellow]")
+            return
+
         os.makedirs(output_dir, exist_ok=True)
         timestamp = time.strftime("%Y%m%d%H%M%S")
         output_file = os.path.join(output_dir, f"scan_results_{timestamp}.txt")
@@ -330,19 +304,14 @@ if __name__ == "__main__":
     try:
         scanner = SecretScanner()
         scanner.welcome_message()
-        mode = input(
-            "Do you want to scan a single website (S) or a list of websites from a file"
-            " (L)? "
-        ).upper()
+        mode = input("Do you want to scan a single website (S) or a list of websites from a file (L)? ").upper()
         if mode == "S":
             start_url = input("Enter the starting URL to scan: ")
             scanner_results = asyncio.run(scanner.crawl_and_scan_all_js(start_url))
             scanner.save_results(scanner_results)
             scanner.scan_complete_message()
         elif mode == "L":
-            file_path = input(
-                "Enter the path to the text file containing the list of websites: "
-            )
+            file_path = input("Enter the path to the text file containing the list of websites: ")
             with open(file_path, "r") as file:
                 websites = file.read().splitlines()
             for website in websites:
@@ -350,9 +319,6 @@ if __name__ == "__main__":
                 scanner.save_results(scanner_results)
             scanner.scan_complete_message()
         else:
-            print(
-                "Invalid mode. Please enter 'S' for a single website or 'L' for a list"
-                " of websites."
-            )
+            print("Invalid mode. Please enter 'S' for a single website or 'L' for a list of websites.")
     except Exception as e:
         scanner.log_error(f"An unexpected error occurred", exception=e)
