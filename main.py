@@ -14,7 +14,6 @@ regex_list = {
     "Artifactory API Token": r'(?:\s|=|:|^|"|&)AKC[a-zA-Z0-9]{10,}',
     "Cloudinary API Key": r"cloudinary://[0-9]{15}:[0-9A-Za-z]+@[a-z]+",
     "Firebase API Key": r"AAAA[A-Za-z0-9_-]{7}:[A-Za-z0-9_-]{140}",
-    "LinkedIn API Key": r"(?i)linkedin(.{0,20})?['\"][0-9a-z]{16}['\"]",
     "Email Address": r"(?<=mailto:)[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z.-]+",
     "PGP Private Key Block": r"-----BEGIN PGP PRIVATE KEY BLOCK-----",
     "SSH Private Key": r"-----BEGIN (?:DSA|EC|OPENSSH|RSA) PRIVATE KEY-----",
@@ -32,7 +31,6 @@ regex_list = {
     "Twitter Access Token": r"(?i)twitter.*['|\"][0-9a-z]{35,44}['|\"]",
     "Windows Live API Key": r"(?i)windowslive.*['|\"][0-9a-f]{22}['|\"]",
     "Microsoft API Key": r"(?i)microsoft.*['|\"][0-9a-f]{22}['|\"]",
-    "Microsoft Azure Data Explorer (Kusto) API Key": r"fed=.*",
     "YouTube API Key": r"AIza[0-9A-Za-z-_]{35}",
     "Reddit Client ID": r"(?i)reddit(.{0,20})?['\"][0-9a-zA-Z-_]{14}['\"]",
     "Instagram Access Token": r"(?i)instagram(.{0,20})?['\"][0-9a-zA-Z-_]{7}['\"]",
@@ -44,10 +42,8 @@ regex_list = {
     "Trello API Key": r"(?i)trello.*['|\"]\w{32}['|\"]",
     "Atlassian API Key": r"(?i)atlassian.*['|\"]\w{32}['|\"]",
     "OAuth 2.0 Bearer Token": r"(?i)bearer[^\s]*?['|\"]\w{32,64}['|\"]",
-    "Zoom API Key": r"(?i)zoom.*['|\"]\w{22}['|\"]",
     "Shopify API Key": r"(?i)shopify.*['|\"]\w{32}['|\"]",
     "Zendesk API Token": r"(?i)zendesk.*['|\"]\w{40}['|\"]",
-    "Square Access Token": r"(?i)square.*['|\"]\w{64}['|\"]",
     "GitLab OAuth Token": r"(?i)gitlab.*['|\"]\w{20,40}['|\"]",
     "Bitbucket OAuth Token": r"(?i)bitbucket.*['|\"]\w{20,40}['|\"]",
     "Discord Bot Token": r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}",
@@ -62,7 +58,6 @@ regex_list = {
     "Mailjet API Token": r"(\w{32}-\w{13})",
     "Twitch Client ID": r"(?i)twitch(.{0,20})?['\"][0-9a-z]{30}['\"]",
     "Twitch OAuth Token": r"oauth:[a-z0-9]+",
-    "Zoom OAuth Token": r"(?i)zoom.*['|\"]\w{60}['|\"]",
     "Shopify OAuth Token": r"(?i)shopify.*['|\"]\w{20}['|\"]",
     "Zendesk OAuth Token": r"(?i)zendesk.*['|\"]\w{20}['|\"]",
     "Salesforce OAuth Token": r"(?i)salesforce.*['|\"]\w{300}['|\"]",
@@ -77,7 +72,6 @@ regex_list = {
     "Stripe Connect API Token": r"(?i)stripe.*['|\"]rk_acct_[0-9a-zA-Z]{24}['|\"]",
     "Twitch API Token": r"(?i)twitch.*['|\"]\w{30}['|\"]",
     "Yammer API Token": r"(?i)yammer.*['|\"]\w{48}['|\"]",
-    "Coinbase API Token": r"(?i)coinbase.*['|\"]\w{45}['|\"]",
     "Facebook App Token": r"(?i)facebook.*['|\"]\w{140}['|\"]",
     "Facebook App Secret": r"(?i)facebook.*['|\"]\w{32}['|\"]",
     "Google Tag Manager Container ID": r"GTM-[A-Z0-9]{6}",
@@ -94,12 +88,10 @@ regex_list = {
     "SendGrid API Key": r"(?i)sendgrid.*['|\"]\w{68}['|\"]",
     "Google Analytics Tracking ID": r"UA-\d{4,10}-\d{1,4}",
     "Mixpanel API Key": r"(?i)mixpanel.*['|\"]\w{32}['|\"]",
-    "AWS IAM Secret Key": r"(?i)aws.*['|\"]\w{40}['|\"]",
     "AWS Cognito ID Token": r"(?i)cognito.*['|\"]\w{115}['|\"]",
     "AWS Cognito Refresh Token": r"(?i)cognito.*['|\"]\w{110}['|\"]",
     "Apache Kafka API Key": r"(?i)kafka.*['|\"]\w{32}['|\"]",
     "Splunk API Token": r"(?i)splunk.*['|\"]\w{64}['|\"]",
-    "Adobe Marketing Cloud API Key": r"(?i)adobe.*['|\"]\w{24}['|\"]",
     "OneLogin API Token": r"(?i)onelogin.*['|\"]\w{40}['|\"]",
     "Auth0 Client Secret": r"(?i)auth0.*['|\"]\w{40}['|\"]",
     "PubNub API Key": r"(?i)pubnub.*['|\"]\w{40}['|\"]",
@@ -126,7 +118,6 @@ regex_list = {
     "SoundCloud API Key": r"(?i)soundcloud.*['|\"]\w{32}['|\"]",
     "Yandex Disk OAuth Token": r"(?i)yandex.*['|\"]\w{52}['|\"]",
     "Asana Access Token": r"(?i)asana.*['|\"]\w{64}['|\"]",
-    "Adobe Creative Cloud API Key": r"(?i)adobe.*['|\"]\w{22}['|\"]",
     "Heroku API Key": r"(?i)heroku.*['|\"]\w{32}['|\"]",
     "Digital Ocean Spaces Access Key": r"(?i)digitalocean.*['|\"]\w{20}['|\"]",
     "Buildkite API Token": r"(?i)buildkite.*['|\"]\w{40}['|\"]",
@@ -141,11 +132,9 @@ regex_list = {
     "Mailgun API Key": r"(?i)mailgun.*['|\"]\w{32}['|\"]",
     "Zendesk OAuth Token": r"(?i)zendesk.*['|\"]\w{40}['|\"]",
     "PubNub API Key": r"(?i)pubnub.*['|\"]\w{32}['|\"]",
-    "Twitter API Key": r"(?i)twitter.*['|\"]\w{35,44}['|\"]",
     "Nexmo API Key": r"(?i)nexmo.*['|\"]\w{32}['|\"]",
     "Spotify Client ID": r"(?i)spotify.*['|\"]\w{32}['|\"]",
     "Stripe API Key": r"(?i)stripe.*['|\"]\w{24}['|\"]",
-    "Google Maps API Key": r"(?i)google.*['|\"]\w{39}['|\"]",
     "Bit.ly Generic Access Token": r"(?i)bitly.*['|\"]\w{34}['|\"]",
     "Braintree API Key": r"(?i)braintree.*['|\"]\w{32}['|\"]",
     "Coinbase API Key": r"(?i)coinbase.*['|\"]\w{32}['|\"]",
@@ -154,8 +143,6 @@ regex_list = {
     "AWS IAM Secret Key": r"(?i)aws.*['|\"]\w{40}['|\"]",
     "Twilio API Key": r"(?i)twilio.*['|\"]\w{32}['|\"]",
     "Firebase Cloud Messaging (FCM) Key": r"AAAA[a-zA-Z0-9_-]{140,340}",
-    "Basic Authentication": r"Basic\s[A-Za-z0-9_\-]+=*",
-    "Bearer Token": r"['|\"]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "API Token": r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Access Token": r"['|\"]?access[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Client ID": r"['|\"]?client[_]?id['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
@@ -163,7 +150,17 @@ regex_list = {
     "API Secret": r"['|\"]?api[_]?secret['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Session Token": r"['|\"]?session[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Refresh Token": r"['|\"]?refresh[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "Secret Key": r"['|\"]?secret[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "Password": r"['|\"]?password['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "DB Connection String": r"['|\"]?connection[_]?string['|\"]?\s*[:=]\s*['|\"]?([^'\"]+)['|\"]?",
+    "Database URL": r"['|\"]?database[_]?url['|\"]?\s*[:=]\s*['|\"]?([^'\"]+)['|\"]?",
+    "Database Password": r"['|\"]?database[_]?password['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "Database User": r"['|\"]?database[_]?user['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "Database Host": r"['|\"]?database[_]?host['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "Database Port": r"['|\"]?database[_]?port['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
 }
+
+
 
 class SecretScanner:
     TEXT_HTML = "text/html"
@@ -213,9 +210,7 @@ class SecretScanner:
 
     def filter_external_links(self, base_url, links):
         parsed_base_url = urlparse(base_url)
-        return [
-            link for link in links if parsed_base_url.netloc == urlparse(link).netloc
-        ]
+        return [link for link in links if parsed_base_url.netloc == urlparse(link).netloc]
 
     async def crawl_and_scan_all_js(self, url):
         try:
@@ -254,22 +249,22 @@ class SecretScanner:
 
     def welcome_message(self):
         ascii_art_logo = """
-        ██████╗  ██████╗ ███╗   ██╗███╗   ██╗███████╗
-        ██╔══██╗██╔═══██╗████╗  ██║████╗  ██║██╔════╝
-        ██║  ██║██║   ██║██╔██╗ ██║██╔██╗ ██║███████╗
-        ██║  ██║██║   ██║██║╚██╗██║██║╚██╗██║╚════██║
-        ██████╔╝╚██████╔╝██║ ╚████║██║ ╚████║███████║
-        ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═══╝╚══════╝
+
+
+██████   ██████  ███    ██ ███████          ██ ███████     ███████  ██████  █████  ███    ██ ███    ██ ███████ ██████  
+██   ██ ██    ██ ████   ██ ██               ██ ██          ██      ██      ██   ██ ████   ██ ████   ██ ██      ██   ██ 
+██   ██ ██    ██ ██ ██  ██ ███████          ██ ███████     ███████ ██      ███████ ██ ██  ██ ██ ██  ██ █████   ██████  
+██   ██ ██    ██ ██  ██ ██      ██     ██   ██      ██          ██ ██      ██   ██ ██  ██ ██ ██  ██ ██ ██      ██   ██ 
+██████   ██████  ██   ████ ███████      █████  ███████     ███████  ██████ ██   ██ ██   ████ ██   ████ ███████ ██   ██ 
+                                                                                                                       
+                                                                                                                       
+
+
         """
         self.console.print(f"[bold magenta]{ascii_art_logo}[/bold magenta]")
         self.console.print("[cyan][bold]Welcome to the Secret Scanner![/bold][/cyan]\n")
-        self.console.print(
-            "This tool scans JavaScript files for sensitive information."
-        )
-        self.console.print(
-            "It can find API keys, credentials, and other secrets embedded in the"
-            " code.\n"
-        )
+        self.console.print("This tool scans JavaScript files for sensitive information.")
+        self.console.print("It can find API keys, credentials, and other secrets embedded in the code.\n")
 
     def scan_complete_message(self):
         self.console.print("[cyan][bold]Scan complete![/bold][/cyan]")
