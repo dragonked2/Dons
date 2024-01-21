@@ -1,62 +1,64 @@
 ![380024582_904511401099198_7120165947283670814_n](https://github.com/dragonked2/Dons/assets/66541902/ad02ae1e-8f30-4ef3-ad35-95735f1cfeb7)
 
-```markdown
-#Dons Secret Scanner 🕵️‍♂️
+# WebScanner - Website JavaScript Scanner
 
+## Overview
 
-**Unearth Secrets, Shield Treasures!**
+WebScanner is a Python tool designed to scan websites and identify potentially sensitive information in JavaScript files. It utilizes regular expressions to search for patterns associated with API keys, access tokens, and other sensitive data. The tool is capable of scanning multiple websites from a file or a single website and provides detailed information about the identified matches.
 
-Ever wondered what secrets are hidden in the code? Introducing Secret Scanner - your digital detective in the world of web security. This tool scans JavaScript files, unveiling hidden gems like API keys and credentials, making your web applications safer than Fort Knox.
+## Features
 
-## 🌟 Features
+- **Versatile Scanning:** WebScanner employs a wide range of regular expressions to identify sensitive information, including API keys, access tokens, and various credentials.
+- **Multi-Website Scanning:** Scan multiple websites listed in a file or provide a single website URL for analysis.
+- **Recursive Depth:** Specify the depth of recursion for scanning linked pages within a website.
+- **Concurrency:** Utilizes multithreading to enhance scanning speed by concurrently analyzing JavaScript files.
 
-- **Slick Interface:** A bold ASCII art logo welcomes you to the Secret Scanner universe.
-- **Intelligent Scanning:** Detects hidden treasures within the labyrinth of JavaScript code.
-- **Web Crawler Magic:** Explores websites, decoding both HTML and linked JavaScript files.
-- **User-Friendly:** Simple command-line interface for single or batch scans.
-- **Save & Secure:** Not just findings, but detailed reports, neatly saved for your peace of mind.
+## Installation
 
-## 🚀 Getting Started
+To use WebScanner, ensure you have Python installed. Install the required dependencies using the following command:
 
-1. **Single Scan:**
-   ```bash
-   python main.py
-   Then append S
-   ```
-
-2. **Batch Scan:**
-
-```
-   python main.py
-   Then Append L
-   ```
-
-## 🛠️ Installation
-
-1. **Clone & Navigate:**
-   ```bash
-   git clone https://github.com/dragonked2/Dons.git
-   cd Dons
-   ```
-
-2. **Power Up Dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Launch the Scanner:**
-   ```bash
-   python main.py
-   ```
-
-## 🎉 Contribution
-
-We welcome contributions! Open issues, send pull requests, and let's make the Secret Scanner even more potent together.
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-Champion Of The Code [Ali Essam] 
-Visit Egyscan [https://github.com/dragonked2/Egyscan]
+```bash
+pip install requests beautifulsoup4 tqdm
 ```
 
+## Usage
+
+1. Run the script by executing the following command in your terminal:
+
+```bash
+python webscanner.py
+```
+
+2. Choose whether to scan multiple websites from a file or a single website.
+3. Provide the necessary inputs, such as the file path or website URL and the desired recursive depth.
+4. Let WebScanner perform the scanning process, and the results will be displayed on the console.
+
+## Examples
+
+### Scanning Multiple Websites from a File
+
+```bash
+Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): file
+Enter the path to the file containing website URLs: websites.txt
+Enter the recursive depth for scanning (default is 4): 3
+```
+
+### Scanning a Single Website
+
+```bash
+Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): single
+Enter the website URL: https://example.com
+Enter the recursive depth for scanning (default is 4): 2
+```
+
+## Disclaimer
+
+WebScanner is intended for educational and security research purposes only. Be sure to have the necessary permissions before scanning any website. The tool is not responsible for any misuse or illegal activities.
+
+## Contributions
+
+Contributions are welcome! Feel free to submit issues or pull requests to enhance the functionality of WebScanner.
+
+## License
+## Ali Essam
+This tool is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
