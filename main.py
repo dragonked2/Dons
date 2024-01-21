@@ -158,6 +158,7 @@ class WebsiteScanner:
     def __init__(self, depth=None):
         self.depth = depth or self.DEFAULT_DEPTH
         self.results = set()
+        self.logger = logging.getLogger(__name__)
 
     def is_same_domain(self, base_url, target_url):
         return urlparse(base_url).netloc == urlparse(target_url).netloc
@@ -167,7 +168,7 @@ class WebsiteScanner:
             with open(file_path, 'r', encoding='utf-8') as file:
                 return [line.strip() for line in file.readlines()]
         except FileNotFoundError:
-            logging.error(f"File not found: {file_path}")
+            self.logger.error(f"File not found: {file_path}")
             raise
 
     def crawl_and_scan(self, url, base_url):
@@ -191,17 +192,17 @@ class WebsiteScanner:
                             self.display_matches(js_url, matches)
 
                 except requests.exceptions.RequestException as ex:
-                    logging.error(f"Error scanning {js_url}: {ex}")
+                    self.logger.error(f"Error scanning {js_url}: {ex}")
 
             next_depth_urls = [urljoin(url, link['href']) for link in soup.find_all('a', href=True)]
             with ThreadPoolExecutor() as executor:
                 executor.map(self.crawl_and_scan, next_depth_urls, [url] * len(next_depth_urls))
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error accessing {url}: {e}")
+            self.logger.error(f"Error accessing {url}: {e}")
             print(f"Error accessing {url}: {e}")
         except Exception as ex:
-            logging.error(f"An unexpected error occurred: {ex}")
+            self.logger.error(f"An unexpected error occurred: {ex}")
             print(f"An unexpected error occurred: {ex}")
 
     def scan_js_file(self, js_url):
@@ -224,22 +225,22 @@ class WebsiteScanner:
             return results
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error accessing {js_url}: {e}")
+            self.logger.error(f"Error accessing {js_url}: {e}")
             print(f"Error accessing {js_url}: {e}")
             return []
         except Exception as ex:
-            logging.error(f"An unexpected error occurred while scanning {js_url}: {ex}")
+            self.logger.error(f"An unexpected error occurred while scanning {js_url}: {ex}")
             return []
 
     def display_matches(self, url, matches):
-        print(f"\nMatches found at {url}:")
+        self.logger.info(f"\nMatches found at {url}:")
 
         if matches:
             for key, snippet in matches:
-                print(f"  Key: {key}")
-                print(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]")
+                self.logger.info(f"  Key: {key}")
+                self.logger.info(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]")
         else:
-            print("  No matches found.")
+            self.logger.info("  No matches found.")
 
     def scan_websites(self, websites):
         with ThreadPoolExecutor() as executor:
@@ -248,7 +249,7 @@ class WebsiteScanner:
                 try:
                     self.crawl_and_scan(website, website)
                 except Exception as ex:
-                    logging.error(f"An error occurred while scanning {website}: {ex}")
+                    self.logger.error(f"An error occurred while scanning {website}: {ex}")
                     print(f"An error occurred while scanning {website}: {ex}")
 
 def main():
@@ -281,10 +282,8 @@ def main():
     except KeyboardInterrupt:
         print("\nScanning interrupted by the user.")
     except requests.exceptions.RequestException as e:
-        logging.error(f"Request error: {e}")
         print(f"Request error: {e}")
     except Exception as ex:
-        logging.error(f"An error occurred: {ex}")
         print(f"An error occurred: {ex}")
 
 if __name__ == "__main__":
