@@ -1,16 +1,15 @@
-import os
-import re
-import time
-import asyncio
-import concurrent.futures
-from urllib.parse import urljoin, urlparse
-from aiohttp import ClientSession, ClientResponseError
+import requests
 from bs4 import BeautifulSoup
-from rich import print
-from rich.console import Console
-from rich.markup import MarkupError
+import re
+from urllib.parse import urljoin, urlparse
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+import logging
+import urllib3
 
-regex_list = {
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+regex_patterns = {
     "Google API Key": r"AIza[0-9A-Za-z\\-_]{35}",
     "Artifactory API Token": r'(?:\s|=|:|^|"|&)AKC[a-zA-Z0-9]{10,}',
     "Cloudinary API Key": r"cloudinary://[0-9]{15}:[0-9A-Za-z]+@[a-z]+",
@@ -23,7 +22,6 @@ regex_list = {
     "Amazon MWS Auth Token": r"amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
     "Authorization Bearer Token": r"bearer [a-zA-Z0-9_\\-\\.=]+",
     "Authorization Basic Credentials": r"basic [a-zA-Z0-9=:_\+\/-]{5,100}",
-    "Authorization API Key": r"api[key|_key|\s+]+[a-zA-Z0-9_\-]{5,100}",
     "JWT Token": r"ey[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$",
     "Facebook Access Token": r"EAACEdEose0cBA[0-9A-Za-z]+",
     "Facebook App ID": r"(?i)(facebook|fb)(.{0,20})?['\"][0-9]{13,17}",
@@ -53,7 +51,6 @@ regex_list = {
     "Confluence API Token": r"(?i)confluence.*['|\"]\w{10}['|\"]",
     "CircleCI API Token": r"(?i)circleci.*['|\"]\w{40}['|\"]",
     "Hootsuite API Token": r"(?i)hootsuite.*['|\"]\w{12}['|\"]",
-    "Oracle Cloud API Key": r"[a-zA-Z0-9]{64}",
     "Sentry API Key": r"(?i)sentry.*['|\"]\w{32}['|\"]",
     "DigitalOcean API Token": r"([a-f0-9]{64})",
     "Mailjet API Token": r"(\w{32}-\w{13})",
@@ -65,7 +62,6 @@ regex_list = {
     "Atlassian OAuth Token": r"(?i)atlassian.*['|\"]\w{300}['|\"]",
     "Stripe Connect OAuth Token": r"(?i)stripe.*['|\"]sk_acct_[0-9a-zA-Z]{24}['|\"]",
     "Yammer OAuth Token": r"(?i)yammer.*['|\"]\w{48}['|\"]",
-    "Medium Integration Token": r"(?i)medium.*['|\"]\w{100}['|\"]",
     "Coinbase OAuth Token": r"(?i)coinbase.*['|\"]\w{45}['|\"]",
     "Microsoft Office 365 API Token": r"(?i)microsoft.*['|\"]\w{360}['|\"]",
     "Pinterest OAuth Token": r"(?i)pinterest.*['|\"]\w{32}['|\"]",
@@ -73,7 +69,6 @@ regex_list = {
     "Stripe Connect API Token": r"(?i)stripe.*['|\"]rk_acct_[0-9a-zA-Z]{24}['|\"]",
     "Yammer API Token": r"(?i)yammer.*['|\"]\w{48}['|\"]",
     "Facebook App Token": r"(?i)facebook.*['|\"]\w{140}['|\"]",
-    "Facebook App Secret": r"(?i)facebook.*['|\"]\w{32}['|\"]",
     "Yelp Fusion API Key": r"(?i)yelp.*['|\"]\w{32}['|\"]",
     "GitKraken OAuth Token": r"(?i)gitkraken.*['|\"]\w{64}['|\"]",
     "Dropbox API Token": r"(?i)dropbox.*['|\"]\w{64}['|\"]",
@@ -143,13 +138,11 @@ regex_list = {
     "Firebase Cloud Messaging (FCM) Key": r"AAAA[a-zA-Z0-9_-]{140,340}",
     "API Token": r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Access Token": r"['|\"]?access[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
-    "Client ID": r"['|\"]?client[_]?id['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Client Secret": r"['|\"]?client[_]?secret['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "API Secret": r"['|\"]?api[_]?secret['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Session Token": r"['|\"]?session[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Refresh Token": r"['|\"]?refresh[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Secret Key": r"['|\"]?secret[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
-    "Password": r"['|\"]?password['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "DB Connection String": r"['|\"]?connection[_]?string['|\"]?\s*[:=]\s*['|\"]?([^'\"]+)['|\"]?",
     "Database URL": r"['|\"]?database[_]?url['|\"]?\s*[:=]\s*['|\"]?([^'\"]+)['|\"]?",
     "Database Password": r"['|\"]?database[_]?password['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
@@ -158,166 +151,141 @@ regex_list = {
     "Database Port": r"['|\"]?database[_]?port['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
 }
 
-result_style = "bold green"
-error_style = "bold red"
-warning_style = "bold yellow"
-match_style = "bold red"
-js_file_style = "cyan"
 
-ascii_art_logo = """
- ██████  ███████  ██████  ███    ██ ███████ ██████  
-██    ██ ██      ██    ██ ████   ██ ██      ██   ██ 
-██    ██ █████   ██████  ██ ██  ██ █████   ██████  
-██    ██ ██      ██    ██ ██  ██ ██ ██      ██   ██ 
- ██████  ███████  ██████  ██   ████ ███████ ██   ██ 
-"""
+class WebsiteScanner:
+    DEFAULT_DEPTH = 4
 
-console = Console()
+    def __init__(self, depth=None):
+        self.depth = depth or self.DEFAULT_DEPTH
+        self.results = set()
 
-class SecretScanner:
-    TEXT_HTML = "text/html"
+    def is_same_domain(self, base_url, target_url):
+        return urlparse(base_url).netloc == urlparse(target_url).netloc
 
-    def __init__(self):
-        self.scanned_urls = set()
-
-    def display_result(self, key, link, matches, js_file=None):
-        print(f"[{result_style}][+] {key} found in {link}[/{result_style}]")
-        if js_file:
-            print(f"[{js_file_style}]Found in JavaScript file:[/{js_file_style}] {js_file}")
-        print(f"[{match_style}]Matches:[/{match_style}] {matches}\n")
-
-    def scan_js_content(self, content, link, js_file=None):
-        results = []
-        for key, pattern in regex_list.items():
-            matches = re.findall(pattern, content)
-            if matches:
-                self.display_result(key, link, matches, js_file=js_file)
-                results.append(f"{key} found in {link}: {matches}")
-        return results
-
-    async def fetch(self, url, session):
+    def get_urls_from_file(self, file_path):
         try:
-            async with session.get(url) as response:
-                return await response.text()
-        except Exception as e:
-            self.log_error(f"Error fetching {url}", exception=e)
-            return ""
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return [line.strip() for line in file.readlines()]
+        except FileNotFoundError:
+            logging.error(f"File not found: {file_path}")
+            raise
 
-    async def scan_js_links_async(self, links, base_url):
-        async with ClientSession() as session:
-            tasks = [self.fetch(urljoin(base_url, link), session) for link in links]
-            return await asyncio.gather(*tasks)
-
-    def extract_js_links(self, html_content, base_url):
-        soup = BeautifulSoup(html_content, "html.parser")
-        js_links = set()
-        for script in soup.find_all("script"):
-            src = script.get("src")
-            if src:
-                js_links.add(urljoin(base_url, src))
-            else:
-                self.scan_js_content(script.text, base_url)
-        return list(js_links)
-
-    def filter_external_links(self, base_url, links):
-        parsed_base_url = urlparse(base_url)
-        return [link for link in links if parsed_base_url.netloc == urlparse(link).netloc]
-
-    async def crawl_and_scan_all_js(self, url):
-        try:
-            if url in self.scanned_urls:
-                return []
-
-            self.scanned_urls.add(url)
-
-            async with ClientSession() as session:
-                response = await session.get(url, timeout=30, allow_redirects=True)
-                content_type = response.headers.get("Content-Type", "").lower()
-
-                if self.TEXT_HTML in content_type:
-                    html_content = await response.text()
-                    js_links = self.extract_js_links(html_content, url)
-                    js_links = self.filter_external_links(url, js_links)
-
-                    print(f"[{result_style}]Scanning {url} for sensitive information...[/{result_style}]")
-
-                    results = self.scan_js_content(html_content, url)
-
-                    for js_link in js_links:
-                        js_content = await self.fetch(js_link, session)
-                        js_results = self.scan_js_content(js_content, js_link)
-                        results.extend(js_results)
-
-                    return results
-                else:
-                    print(f"[{warning_style}]Skipping {url} (Not HTML content)[/{warning_style}]")
-                    return []
-        except ClientResponseError as e:
-            self.log_error(f"Error accessing {url}", exception=e)
-            return []
-        except Exception as e:
-            self.log_error(f"An unexpected error occurred", exception=e)
-
-    async def scan_multiple_websites(self, websites):
-        results = []
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_to_website = {executor.submit(self.crawl_and_scan_all_js, website): website for website in websites}
-            for future in concurrent.futures.as_completed(future_to_website):
-                website = future_to_website[future]
-                try:
-                    scanner_results = future.result()
-                    results.extend(scanner_results)
-                    print(f"[{result_style}][bold]Scan of {website} complete![/{result_style}][/bold]")
-                except Exception as e:
-                    self.log_error(f"An unexpected error occurred while scanning {website}", exception=e)
-        return results
-
-    def save_results(self, results, output_dir="scan_results"):
-        if results is None:
-            print(f"[{warning_style}]No results to save.[/{warning_style}]")
+    def crawl_and_scan(self, url, base_url):
+        if self.depth <= 0 or not self.is_same_domain(base_url, url):
             return
 
-        os.makedirs(output_dir, exist_ok=True)
-        timestamp = time.strftime("%Y%m%d%H%M%S")
-        output_file = os.path.join(output_dir, f"scan_results_{timestamp}.txt")
         try:
-            with open(output_file, "w", encoding="utf-8") as f:
-                for result in results:
-                    f.write(result + "\n")
-            print(f"[{result_style}]Results saved to {output_file}[/{result_style}]")
-        except Exception as e:
-            self.log_error(f"Error saving results to {output_file}", exception=e)
+            response = requests.get(url, verify=False, timeout=10)
+            response.raise_for_status()
 
-    def log_error(self, message, exception=None):
+            soup = BeautifulSoup(response.text, 'html.parser')
+            js_urls = [urljoin(url, script['src']) for script in soup.find_all('script', src=True)]
+
+            for js_url in tqdm(js_urls, desc=f"Scanning JavaScript files at {url}", position=0, leave=False):
+                try:
+                    matches = self.scan_js_file(js_url)
+                    if matches:
+                        result_key = (js_url, tuple(matches))
+                        if result_key not in self.results:
+                            self.results.add(result_key)
+                            self.display_matches(js_url, matches)
+
+                except requests.exceptions.RequestException as ex:
+                    logging.error(f"Error scanning {js_url}: {ex}")
+
+            next_depth_urls = [urljoin(url, link['href']) for link in soup.find_all('a', href=True)]
+            with ThreadPoolExecutor() as executor:
+                executor.map(self.crawl_and_scan, next_depth_urls, [url] * len(next_depth_urls))
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error accessing {url}: {e}")
+            print(f"Error accessing {url}: {e}")
+        except Exception as ex:
+            logging.error(f"An unexpected error occurred: {ex}")
+            print(f"An unexpected error occurred: {ex}")
+
+    def scan_js_file(self, js_url):
         try:
-            if exception is not None:
-                print(f"[{error_style}]{message}. Exception: {str(exception)}[/{error_style}]")
-            else:
-                print(f"[{error_style}]{message}[/{error_style}]")
-        except MarkupError:
-            print(f"An error occurred: {str}(exception)")
+            response = requests.get(js_url, verify=False, timeout=10)
+            response.raise_for_status()
+
+            js_content = response.text
+            results = []
+
+            for key, pattern in regex_patterns.items():
+                if isinstance(pattern, str):
+                    matches = re.finditer(pattern, js_content)
+                    for match in matches:
+                        start = max(0, match.start() - 50)
+                        end = min(len(js_content), match.end() + 50)
+                        snippet = js_content[start:end].strip()
+                        results.append((key, snippet))
+
+            return results
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error accessing {js_url}: {e}")
+            print(f"Error accessing {js_url}: {e}")
+            return []
+        except Exception as ex:
+            logging.error(f"An unexpected error occurred while scanning {js_url}: {ex}")
+            return []
+
+    def display_matches(self, url, matches):
+        print(f"\nMatches found at {url}:")
+
+        if matches:
+            for key, snippet in matches:
+                print(f"  Key: {key}")
+                print(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]")
+        else:
+            print("  No matches found.")
+
+    def scan_websites(self, websites):
+        with ThreadPoolExecutor() as executor:
+            for website in tqdm(websites, desc="Scanning websites", position=1):
+                print(f"\nScanning website: {website}\n")
+                try:
+                    self.crawl_and_scan(website, website)
+                except Exception as ex:
+                    logging.error(f"An error occurred while scanning {website}: {ex}")
+                    print(f"An error occurred while scanning {website}: {ex}")
+
+def main():
+    try:
+        file_or_single = input("Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): ").lower()
+
+        if file_or_single == 'file':
+            file_path = input("Enter the path to the file containing website URLs: ")
+            try:
+                websites = WebsiteScanner().get_urls_from_file(file_path)
+            except FileNotFoundError:
+                print("File not found. Exiting.")
+                return
+        elif file_or_single == 'single':
+            website = input("Enter the website URL: ")
+            websites = [website]
+        else:
+            print("Invalid input. Exiting.")
+            return
+
+        depth = int(input(f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ") or WebsiteScanner.DEFAULT_DEPTH)
+
+        print(f"\nScanning {len(websites)} website(s) with recursive depth of {depth}...\n")
+
+        scanner = WebsiteScanner(depth=depth)
+        scanner.scan_websites(websites)
+
+        print("\nScanning completed.")
+
+    except KeyboardInterrupt:
+        print("\nScanning interrupted by the user.")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Request error: {e}")
+        print(f"Request error: {e}")
+    except Exception as ex:
+        logging.error(f"An error occurred: {ex}")
+        print(f"An error occurred: {ex}")
 
 if __name__ == "__main__":
-    try:
-        print(ascii_art_logo)
-        scanner = SecretScanner()
-        mode = input("Do you want to scan a single website (S) or a list of websites from a file (L)? ").upper()
-        if mode == "S":
-            start_url = input("Enter the starting URL to scan: ")
-            print(f"[{result_style}][bold]Starting scan...[/{result_style}][/bold]")
-            scanner_results = asyncio.run(scanner.crawl_and_scan_all_js(start_url))
-            scanner.save_results(scanner_results)
-            print(f"[{result_style}][bold]Scan complete![/{result_style}][/bold]")
-        elif mode == "L":
-            file_path = input("Enter the path to the text file containing the list of websites: ")
-            with open(file_path, "r") as file:
-                websites = file.read().splitlines()
-            print(f"[{result_style}][bold]Starting scans...[/{result_style}][/bold]")
-            for website in websites:
-                scanner_results = asyncio.run(scanner.crawl_and_scan_all_js(website))
-                scanner.save_results(scanner_results)
-            print(f"[{result_style}][bold]Scan complete![/{result_style}][/bold]")
-        else:
-            print(f"[{error_style}]Invalid mode. Please enter 'S' for a single website or 'L' for a list of websites.[/{error_style}]")
-    except Exception as e:
-        scanner.log_error(f"An unexpected error occurred", exception=e)
+    main()
