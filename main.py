@@ -1,13 +1,7 @@
-import os
-import requests
+import os, requests, difflib, logging, urllib3, asyncio, re
 from bs4 import BeautifulSoup
-import re
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor
-import logging
-import urllib3
-import asyncio
-import difflib
 from termcolor import colored
 from tqdm import tqdm
 
@@ -33,6 +27,79 @@ regex_patterns = {
     "Google Cloud Platform OAuth Token": r"[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com",
     "Twitter Access Token": r"(?i)twitter.*['|\"][0-9a-z]{35,44}['|\"]",
     "Windows Live API Key": r"(?i)windowslive.*['|\"][0-9a-f]{22}['|\"]",
+    "Bitcoin Private Key (WIF)": r"[5KL][1-9A-HJ-NP-Za-km-z]{50,51}$",
+    "Ethereum Private Key": r"0x[a-fA-F0-9]{64}",
+    "Ripple Secret Key": r"s[a-zA-Z0-9]{53}$",
+    "Litecoin Private Key (WIF)": r"[LK][1-9A-HJ-NP-Za-km-z]{50}$",
+    "Bitcoin Cash Private Key (WIF)": r"[Kk][1-9A-HJ-NP-Za-km-z]{50,51}$",
+    "Cardano Extended Private Key": r"xprv[a-zA-Z0-9]{182}$",
+    "Monero Private Spend Key": r"4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}",
+    "Monero Private View Key": r"9[1-9A-HJ-NP-Za-km-z]{94}",
+    "Zcash Private Key": r"sk[a-zA-Z0-9]{95}$",
+    "Tezos Secret Key": r"edsk[a-zA-Z0-9]{54}$",
+    "EOS Private Key": r"5[a-zA-Z0-9]{50}$",
+    "Stellar Secret Key": r"S[a-zA-Z0-9]{55}$",
+    "NEO Private Key": r"K[a-zA-Z0-9]{51}$",
+    "IOTA Seed": r"[A-Z9]{81}",
+    "Tron Private Key": r"0x[a-fA-F0-9]{64}",
+    "VeChain Private Key": r"0x[a-fA-F0-9]{64}",
+    "NEAR Protocol Private Key": r"ed25519:[a-zA-Z0-9+/]{43}==$",
+    "Avalanche Private Key": r"PrivateKey-[a-zA-Z0-9]{58}",
+    "Polkadot Private Key": r"0x[a-fA-F0-9]{64}",
+    "Chainlink Private Key": r"0x[a-fA-F0-9]{64}",
+    "Cosmos Private Key": r"0x[a-fA-F0-9]{64}",
+    "Filecoin Private Key": r"f1[a-zA-Z0-9]{98}$",
+    "Algorand Private Key": r"([A-Z2-7]{58})",
+    "Solana Private Key": r"seed_[a-zA-Z0-9]{58}",
+    "Terra Private Key": r"terravaloper[a-zA-Z0-9]{39}$",
+    "Polygon (Matic) Private Key": r"0x[a-fA-F0-9]{64}",
+    "Binance Smart Chain Private Key": r"0x[a-fA-F0-9]{64}",
+    "Hedera Hashgraph Private Key": r"302e020100300506032b657004220420[a-fA-F0-9]{64}300506032b657001020420[a-fA-F0-9]{64}$",
+    "Wanchain Private Key": r"0x[a-fA-F0-9]{64}",
+    "Kusama Private Key": r"0x[a-fA-F0-9]{64}",
+    "BitShares Private Key": r"BTS[a-zA-Z0-9]{50}",
+    "EOSIO Key": r"EOS[a-zA-Z0-9]{50}",
+    "IOST Private Key": r"0x[a-fA-F0-9]{64}",
+    "Steem Private Key": r"5[a-zA-Z0-9]{50}",
+    "Harmony (ONE) Private Key": r"one1[a-zA-Z0-9]{38}$",
+    "Ardor Private Key": r"S[a-zA-Z0-9]{35}$",
+    "Decred Private Key": r"Ds[a-zA-Z0-9]{32}$",
+    "Qtum Private Key": r"0x[a-fA-F0-9]{64}",
+    "Horizen Private Key": r"zn[a-zA-Z0-9]{38}$",
+    "NEM Private Key": r"0[a-zA-Z0-9]{63}",
+    "NEO Private Key": r"A[a-zA-Z0-9]{33}$",
+    "Ontology Private Key": r"A[a-zA-Z0-9]{32}$",
+    "Waves Private Key": r"3[a-zA-Z0-9]{35}$",
+    "Nano Private Key": r"xrb_[a-zA-Z0-9]{60}$",
+    "IOTEX Private Key": r"io1[a-zA-Z0-9]{41}$",
+    "ICON Private Key": r"hx[a-zA-Z0-9]{40}$",
+    "VeThor Private Key": r"0x[a-fA-F0-9]{64}",
+    "Zilliqa Private Key": r"zil[a-zA-Z0-9]{39}$",
+    "Kava Private Key": r"0x[a-fA-F0-9]{64}",
+    "Elrond Private Key": r"erd1[a-zA-Z0-9]{58}$",
+    "Harmony (ONE) BLS Key": r"one1p[a-zA-Z0-9]{55}$",
+    "Celo Private Key": r"0x[a-fA-F0-9]{64}",
+    "Flow Private Key": r"0x[a-fA-F0-9]{64}",
+    "Stacks (STX) Private Key": r"0x[a-fA-F0-9]{64}",
+    "Solana SPL Token Account Address": r"0x[a-fA-F0-9]{64}",
+    "Aavegotchi Baazaar NFT Owner": r"0x[a-fA-F0-9]{64}",
+    "Decentraland (MANA) Token ID": r"0x[a-fA-F0-9]{64}",
+    "Uniswap LP Token": r"0x[a-fA-F0-9]{64}",
+    "Curve.fi LP Token": r"0x[a-fA-F0-9]{64}",
+    "SushiSwap LP Token": r"0x[a-fA-F0-9]{64}",
+    "Balancer LP Token": r"0x[a-fA-F0-9]{64}",
+    "1inch LP Token": r"0x[a-fA-F0-9]{64}",
+    "Synthetix sUSD LP Token": r"0x[a-fA-F0-9]{64}",
+    "Compound cToken Address": r"0x[a-fA-F0-9]{64}",
+    "MakerDAO Vault Address": r"0x[a-fA-F0-9]{64}",
+    "Yearn Finance Vault Address": r"0x[a-fA-F0-9]{64}",
+    "Curve.fi Pool Address": r"0x[a-fA-F0-9]{64}",
+    "SushiSwap MasterChef Address": r"0x[a-fA-F0-9]{64}",
+    "Uniswap Router Address": r"0x[a-fA-F0-9]{64}",
+    "Aave Protocol Address": r"0x[a-fA-F0-9]{64}",
+    "Compound Protocol Address": r"0x[a-fA-F0-9]{64}",
+    "Synthetix Protocol Address": r"0x[a-fA-F0-9]{64}",
+    "Yearn Finance Protocol Address": r"0x[a-fA-F0-9]{64}",
     "Microsoft API Key": r"(?i)microsoft.*['|\"][0-9a-f]{22}['|\"]",
     "YouTube API Key": r"AIza[0-9A-Za-z-_]{35}",
     "Reddit Client ID": r"(?i)reddit(.{0,20})?['\"][0-9a-zA-Z-_]{14}['\"]",
@@ -136,9 +203,7 @@ regex_patterns = {
     "Braintree API Key": r"(?i)braintree.*['|\"]\w{32}['|\"]",
     "Coinbase API Key": r"(?i)coinbase.*['|\"]\w{32}['|\"]",
     "Splunk API Key": r"(?i)splunk.*['|\"]\w{64}['|\"]",
-    "AWS IAM Access Key": r"(?i)aws.*['|\"]\w{20}['|\"]",
     "AWS IAM Secret Key": r"(?i)aws.*['|\"]\w{40}['|\"]",
-    "Twilio API Key": r"(?i)twilio.*['|\"]\w{32}['|\"]",
     "Firebase Cloud Messaging (FCM) Key": r"AAAA[a-zA-Z0-9_-]{140,340}",
     "API Token": r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Access Token": r"['|\"]?access[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
@@ -153,6 +218,107 @@ regex_patterns = {
     "Database User": r"['|\"]?database[_]?user['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Database Host": r"['|\"]?database[_]?host['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Database Port": r"['|\"]?database[_]?port['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
+    "Bitcoin Private Key (Extended Key)": r"xprv[a-zA-Z0-9]{107}$|xpub[a-zA-Z0-9]{107}$",
+    "Ethereum Private Key (Extended Key)": r"xprv[a-zA-Z0-9]{107}$|xpub[a-zA-Z0-9]{107}$",
+    "Monero Wallet Address": r"4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}",
+    "Zcash Transparent Address": r"t1[a-zA-Z0-9]{33}$",
+    "Tezos Public Key": r"tz[1-9A-HJ-NP-Za-km-z]{34}$",
+    "Cardano Extended Public Key": r"xpub[a-zA-Z0-9]{182}$",
+    "EOS Account Name": r"[a-z1-5]{1,12}$",
+    "Stellar Account ID": r"G[a-zA-Z0-9]{54}$",
+    "NEO Wallet Address": r"A[a-zA-Z0-9]{33}$",
+    "IOTA Address": r"[A-Z9]{90}",
+    "Ripple Address": r"r[a-zA-Z0-9]{33}$",
+    "SSH Private Key (DSA)": r"-----BEGIN DSA PRIVATE KEY-----[a-zA-Z0-9/+=]+-----END DSA PRIVATE KEY-----",
+    "SSH Private Key (ECDSA)": r"-----BEGIN EC PRIVATE KEY-----[a-zA-Z0-9/+=]+-----END EC PRIVATE KEY-----",
+    "SSH Private Key (Ed25519)": r"-----BEGIN OPENSSH PRIVATE KEY-----[a-zA-Z0-9/+=]+-----END OPENSSH PRIVATE KEY-----",
+    "BitLocker Recovery Key": r"[0-9BCDFGHJKMPQRTVWXY]{6}-[0-9BCDFGHJKMPQRTVWXY]{6}-[0-9BCDFGHJKMPQRTVWXY]{6}-[0-9BCDFGHJKMPQRTVWXY]{6}-[0-9BCDFGHJKMPQRTVWXY]{6}",
+    "VeraCrypt Recovery Key": r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{8}-[0-9A-Fa-f]{8}",
+    "TrueCrypt Volume Keyfile": r"[0-9A-Fa-f]{64}.keyfile",
+    "GPG Private Key": r"-----BEGIN PGP PRIVATE KEY BLOCK-----[a-zA-Z0-9/+=]+-----END PGP PRIVATE KEY BLOCK-----",
+    "Android Keystore Key": r"-----BEGIN (?:.*\n)*.*ENCRYPTED PRIVATE KEY(?:.*\n)+.*-----END (?:.*\n)*",
+    "Windows Credential Manager Entry": r"\[.*\]\nUsername=.*\nPassword=.*\n",
+    "KeePass Database Master Key": r"Database Master Key: .*",
+    "Slack Token": r"(?i)slack.*['|\"]xox[baprs]-\w{12}-\w{12}-\w{12}['|\"]",
+    "Git Token": r"(?i)git.*['|\"]\w{40}['|\"]",
+    "Tinder API Token": r"(?i)tinder.*['|\"]\w{32}['|\"]",
+    "Zoom API Key": r"(?i)zoom.*['|\"]\w{22}['|\"]",
+    "Jenkins API Token": r"(?i)jenkins.*['|\"]\w{32}['|\"]",
+    "PagerDuty Integration Key": r"(?i)pdintegration.*['|\"]\w{32}['|\"]",
+    "Docker Hub Token": r"(?i)dockerhub.*['|\"]\w{32}['|\"]",
+    "JFrog Artifactory API Key": r"(?i)artifactory.*['|\"]\w{40}['|\"]",
+    "Kubernetes Config File": r"(?i)apiVersion: v1.*kind: Config",
+    "Hashicorp Consul Token": r"(?i)consul.*['|\"]\w{16}['|\"]",
+    "Datadog API Key": r"(?i)datadog.*['|\"]\w{32}['|\"]",
+    "Dynatrace API Token": r"(?i)dynatrace.*['|\"]\w{32}['|\"]",
+    "New Relic API Key": r"(?i)newrelic.*['|\"]\w{40}['|\"]",
+    "Splunk HEC Token": r"(?i)splunk.*token\s*:\s*['|\"]\w{32}['|\"]",
+    "Puppet Forge API Token": r"(?i)puppet.*['|\"]\w{64}['|\"]",
+    "Azure Service Principal Client Secret": r"(?i)azure.*client\s*secret\s*=\s*['|\"]\w{44}['|\"]",
+    "Azure Storage Account Key": r"(?i)azure.*storageaccountkey\s*=\s*['|\"]\w{88}==['|\"]",
+    "Azure Cosmos DB Primary Key": r"(?i)azure.*primary\s*key\s*=\s*['|\"]\w{64}['|\"]",
+    "Azure SAS Token": r"(?i)azure.*sas\s*=\s*['|\"]\w{32}['|\"]",
+    "AWS S3 Access Key": r"(?i)aws.*s3.*access\s*key\s*=\s*['|\"]\w{20}['|\"]",
+    "AWS S3 Secret Key": r"(?i)aws.*s3.*secret\s*key\s*=\s*['|\"]\w{40}['|\"]",
+    "AWS Lambda Function Key": r"(?i)aws.*lambda.*function.*key\s*=\s*['|\"]\w{30}['|\"]",
+    "IBM Cloud API Key": r"(?i)ibm.*api.*key\s*:\s*['|\"]\w{44}['|\"]",
+    "IBM Cloud IAM API Key": r"(?i)ibm.*iam.*api.*key\s*:\s*['|\"]\w{44}['|\"]",
+    "Jupyter Notebook Token": r"(?i)jupyter.*token\s*=\s*['|\"]\w{32}['|\"]",
+    "AWS Elastic Beanstalk API Key": r"(?i)aws.*elasticbeanstalk.*api.*key\s*=\s*['|\"]\w{20}['|\"]",
+    "Google Cloud Service Account Key": r"(?i)google.*service.*account.*key\s*:\s*['|\"]\w{88}['|\"]",
+    "Google Cloud Firestore API Key": r"(?i)google.*firestore.*api.*key\s*=\s*['|\"]\w{40}['|\"]",
+    "Google Cloud Storage API Key": r"(?i)google.*storage.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Speech API Key": r"(?i)google.*speech.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Vision API Key": r"(?i)google.*vision.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Translation API Key": r"(?i)google.*translation.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Natural Language API Key": r"(?i)google.*language.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Video Intelligence API Key": r"(?i)google.*video.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Datastore API Key": r"(?i)google.*datastore.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud BigQuery API Key": r"(?i)google.*bigquery.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Dataproc API Key": r"(?i)google.*dataproc.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Pub/Sub API Key": r"(?i)google.*pubsub.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Spanner API Key": r"(?i)google.*spanner.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Compute Engine API Key": r"(?i)google.*compute.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Dialogflow API Key": r"(?i)google.*dialogflow.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Realtime Database API Key": r"(?i)google.*firebase.*realtime.*database.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Cloud Messaging (FCM) API Key": r"(?i)google.*firebase.*cloud.*messaging.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Authentication API Key": r"(?i)google.*firebase.*authentication.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Hosting API Key": r"(?i)google.*firebase.*hosting.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Test Lab API Key": r"(?i)google.*firebase.*test.*lab.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Remote Config API Key": r"(?i)google.*firebase.*remote.*config.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase In-App Messaging API Key": r"(?i)google.*firebase.*in.*app.*messaging.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Dynamic Links API Key": r"(?i)google.*firebase.*dynamic.*links.*api.*key\s*=\s*['|\"]\w{39}['|\"]",
+    "Google Cloud Firebase Realtime Database URL": r"(?i)google.*firebase.*realtime.*database.*url\s*=\s*['|\"]https:\/\/[a-zA-Z0-9-]+\.firebaseio\.com['|\"]",
+    "Google Cloud Firebase Project ID": r"(?i)google.*firebase.*project.*id\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Storage Bucket": r"(?i)google.*firebase.*storage.*bucket\s*=\s*['|\"]\w+\.appspot\.com['|\"]",
+    "Google Cloud Firebase Default Cloud Storage Bucket": r"(?i)google.*firebase.*default.*cloud.*storage.*bucket\s*=\s*['|\"]\w+\.appspot\.com['|\"]",
+    "Google Cloud Firebase Default Realtime Database Instance": r"(?i)google.*firebase.*default.*realtime.*database.*instance\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Cloud Storage Instance": r"(?i)google.*firebase.*default.*cloud.*storage.*instance\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Cloud Storage Host": r"(?i)google.*firebase.*default.*cloud.*storage.*host\s*=\s*['|\"]\w+\.appspot\.com['|\"]",
+    "Google Cloud Firebase Default Cloud Storage Base URL": r"(?i)google.*firebase.*default.*cloud.*storage.*base.*url\s*=\s*['|\"]https:\/\/\w+\.appspot\.com['|\"]",
+    "Google Cloud Firebase Default Cloud Storage Path": r"(?i)google.*firebase.*default.*cloud.*storage.*path\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Cloud Storage Requester Pays": r"(?i)google.*firebase.*default.*cloud.*storage.*requester.*pays\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Cloud Storage User Project": r"(?i)google.*firebase.*default.*cloud.*storage.*user.*project\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore Project ID": r"(?i)google.*firebase.*default.*firestore.*project.*id\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore Database ID": r"(?i)google.*firebase.*default.*firestore.*database.*id\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore Collection ID": r"(?i)google.*firebase.*default.*firestore.*collection.*id\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore Document ID": r"(?i)google.*firebase.*default.*firestore.*document.*id\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore Storage Bucket": r"(?i)google.*firebase.*default.*firestore.*storage.*bucket\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore Host": r"(?i)google.*firebase.*default.*firestore.*host\s*=\s*['|\"]\w+\.appspot\.com['|\"]",
+    "Google Cloud Firebase Default Firestore Base URL": r"(?i)google.*firebase.*default.*firestore.*base.*url\s*=\s*['|\"]https:\/\/\w+\.appspot\.com['|\"]",
+    "Google Cloud Firebase Default Firestore Path": r"(?i)google.*firebase.*default.*firestore.*path\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore User Project": r"(?i)google.*firebase.*default.*firestore.*user.*project\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firebase Default Firestore Emulator Host": r"(?i)google.*firebase.*default.*firestore.*emulator.*host\s*=\s*['|\"]\w+\.appspot\.com['|\"]",
+    "Google Cloud Firestore Rules File": r"(?i)google.*firestore.*rules\s*=\s*['|\"].*\.rules['|\"]",
+    "Google Cloud Firestore Indexes File": r"(?i)google.*firestore.*indexes\s*=\s*['|\"].*\.json['|\"]",
+    "Google Cloud Firestore Emulator Rules File": r"(?i)google.*firestore.*emulator.*rules\s*=\s*['|\"].*\.rules['|\"]",
+    "Google Cloud Firestore Emulator Indexes File": r"(?i)google.*firestore.*emulator.*indexes\s*=\s*['|\"].*\.json['|\"]",
+    "Google Cloud Firestore Emulator Host": r"(?i)google.*firestore.*emulator.*host\s*=\s*['|\"]\w+\.appspot\.com['|\"]",
+    "Google Cloud Firestore Emulator Port": r"(?i)google.*firestore.*emulator.*port\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firestore Emulator Auto Download": r"(?i)google.*firestore.*emulator.*auto.*download\s*=\s*['|\"]\w+['|\"]",
+    "Google Cloud Firestore Emulator Host and Port": r"(?i)google.*firestore.*emulator.*host.*port\s*=\s*['|\"]\w+\.appspot\.com:\w+['|\"]",
+    "Google Cloud Pub/Sub Emulator Host": r"(?i)google.*pubsub.*emulator.*host\s*=\s*['|\"]\w+\.appspot\.com['|\"]",
+
 }
 
 
@@ -197,8 +363,7 @@ class WebsiteScanner:
                 result_key = (js_url, tuple(matches))
                 if result_key not in self.results:
                     self.results.add(result_key)
-                    self.save_matches(url, js_url, matches)
-                    self.display_matches(url, js_url, matches)
+                    self.save_and_display_matches(url, js_url, matches)
 
             next_depth_urls = [urljoin(url, link['href']) for link in soup.find_all('a', href=True)]
             for u in next_depth_urls:
@@ -234,7 +399,7 @@ class WebsiteScanner:
     def fetch(self, url):
         return requests.get(url, verify=False, timeout=10)
 
-    def save_matches(self, website_url, js_url, matches):
+    def save_and_display_matches(self, website_url, js_url, matches):
         with open(self.matches_file_path, 'a', encoding='utf-8') as file:
             file.write(f"\nMatches found at {website_url}, JavaScript file: {js_url}:\n")
 
@@ -245,7 +410,6 @@ class WebsiteScanner:
             else:
                 file.write("  No matches found.\n")
 
-    def display_matches(self, website_url, js_url, matches):
         self.logger.info(colored(f"\nMatches found at {website_url}, JavaScript file: {js_url}:", 'green'))
 
         if matches:
@@ -262,12 +426,7 @@ class WebsiteScanner:
                 clustered_results[js_url] = matches
             else:
                 for key, snippet in matches:
-                    found = False
-                    for existing_key, existing_snippet in clustered_results[js_url]:
-                        similarity_ratio = self.calculate_similarity(existing_snippet, snippet)
-                        if similarity_ratio > 90:
-                            found = True
-                            break
+                    found = any(self.calculate_similarity(existing_snippet, snippet) > 90 for _, existing_snippet in clustered_results[js_url])
                     if not found:
                         clustered_results[js_url].append((key, snippet))
 
@@ -290,25 +449,19 @@ def main():
 
         file_or_single = input(colored("Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): ", 'yellow')).lower()
 
-        if file_or_single == 'file':
-            file_path = input(colored("Enter the path to the file containing website URLs: ", 'yellow'))
+        websites = []
+        if file_or_single in ['file', 'single']:
             try:
-                websites = WebsiteScanner().get_urls_from_file(file_path)
+                websites = WebsiteScanner().get_urls_from_file(input(colored("Enter the path to the file containing website URLs: ", 'yellow'))) if file_or_single == 'file' else [input(colored("Enter the website URL: ", 'yellow'))]
             except FileNotFoundError:
                 logging.error("File not found. Exiting.")
                 return
-        elif file_or_single == 'single':
-            website = input(colored("Enter the website URL: ", 'yellow'))
-            websites = [website]
         else:
             logging.error("Invalid input. Exiting.")
             return
 
         try:
-            depth_input = input(colored(f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ", 'yellow')) or WebsiteScanner.DEFAULT_DEPTH
-            depth = int(depth_input)
-            if depth < 0:
-                raise ValueError("Depth must be a non-negative integer.")
+            depth = max(0, int(input(colored(f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ", 'yellow')) or WebsiteScanner.DEFAULT_DEPTH))
         except ValueError as ve:
             logging.error(f"Invalid depth value: {ve}. Using default depth.")
             depth = WebsiteScanner.DEFAULT_DEPTH
@@ -327,3 +480,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
