@@ -1,3 +1,4 @@
+import os
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -6,6 +7,10 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import logging
 import urllib3
+from termcolor import colored
+from colorama import Fore, Style
+import asyncio
+import functools
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -159,6 +164,7 @@ class WebsiteScanner:
         self.depth = depth or self.DEFAULT_DEPTH
         self.results = set()
         self.logger = logging.getLogger(__name__)
+        self.matches_file_path = os.path.join(os.path.expanduser("~"), "Desktop", "matches.txt")
 
     def is_same_domain(self, base_url, target_url):
         return urlparse(base_url).netloc == urlparse(target_url).netloc
@@ -167,124 +173,136 @@ class WebsiteScanner:
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
                 return [line.strip() for line in file.readlines()]
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             self.logger.error(f"File not found: {file_path}")
-            raise
+            raise e
 
-    def crawl_and_scan(self, url, base_url):
+    async def crawl_and_scan(self, url, base_url):
         if self.depth <= 0 or not self.is_same_domain(base_url, url):
             return
 
         try:
-            response = requests.get(url, verify=False, timeout=10)
-            response.raise_for_status()
+            response = await self.fetch(url)
+            if response.status_code == 403:
+                self.logger.warning(f"Skipping {url} due to 403 Forbidden error")
+                return
 
             soup = BeautifulSoup(response.text, 'html.parser')
             js_urls = [urljoin(url, script['src']) for script in soup.find_all('script', src=True)]
 
             for js_url in tqdm(js_urls, desc=f"Scanning JavaScript files at {url}", position=0, leave=False):
                 try:
-                    matches = self.scan_js_file(js_url)
+                    matches = await self.scan_js_file(js_url)
                     if matches:
                         result_key = (js_url, tuple(matches))
                         if result_key not in self.results:
                             self.results.add(result_key)
-                            self.display_matches(js_url, matches)
+                            self.save_matches(url, js_url, matches)
+                            self.display_matches(url, js_url, matches)
 
                 except requests.exceptions.RequestException as ex:
                     self.logger.error(f"Error scanning {js_url}: {ex}")
 
             next_depth_urls = [urljoin(url, link['href']) for link in soup.find_all('a', href=True)]
             with ThreadPoolExecutor() as executor:
-                executor.map(self.crawl_and_scan, next_depth_urls, [url] * len(next_depth_urls))
+                await asyncio.gather(*[self.crawl_and_scan(u, url) for u in next_depth_urls])
 
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Error accessing {url}: {e}")
-            print(f"Error accessing {url}: {e}")
         except Exception as ex:
             self.logger.error(f"An unexpected error occurred: {ex}")
-            print(f"An unexpected error occurred: {ex}")
 
-    def scan_js_file(self, js_url):
+    async def scan_js_file(self, js_url):
         try:
-            response = requests.get(js_url, verify=False, timeout=10)
+            response = await self.fetch(js_url)
             response.raise_for_status()
 
             js_content = response.text
             results = []
 
             for key, pattern in regex_patterns.items():
-                if isinstance(pattern, str):
-                    matches = re.finditer(pattern, js_content)
-                    for match in matches:
-                        start = max(0, match.start() - 50)
-                        end = min(len(js_content), match.end() + 50)
-                        snippet = js_content[start:end].strip()
-                        results.append((key, snippet))
+                matches = re.finditer(pattern, js_content)
+                for match in matches:
+                    snippet = match.group(0).strip()
+                    results.append((key, snippet))
 
             return results
 
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Error accessing {js_url}: {e}")
-            print(f"Error accessing {js_url}: {e}")
             return []
         except Exception as ex:
             self.logger.error(f"An unexpected error occurred while scanning {js_url}: {ex}")
             return []
 
-    def display_matches(self, url, matches):
-        self.logger.info(f"\nMatches found at {url}:")
+    async def fetch(self, url):
+        loop = asyncio.get_event_loop()
+        partial_requests_get = functools.partial(requests.get, url, verify=False, timeout=10)
+        return await loop.run_in_executor(None, partial_requests_get)
+
+    def save_matches(self, website_url, js_url, matches):
+        with open(self.matches_file_path, 'a', encoding='utf-8') as file:
+            file.write(f"\nMatches found at {website_url}, JavaScript file: {js_url}:\n")
+
+            if matches:
+                for key, snippet in matches:
+                    file.write(f"  Key: {key}\n")
+                    file.write(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]\n")
+            else:
+                file.write("  No matches found.\n")
+
+    def display_matches(self, website_url, js_url, matches):
+        self.logger.info(colored(f"\nMatches found at {website_url}, JavaScript file: {js_url}:", 'green'))
 
         if matches:
             for key, snippet in matches:
-                self.logger.info(f"  Key: {key}")
-                self.logger.info(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]")
+                self.logger.info(colored(f"  Key: {key}", 'cyan'))
+                self.logger.info(colored(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]", 'yellow'))
         else:
-            self.logger.info("  No matches found.")
+            self.logger.info(colored("  No matches found.", 'red'))
 
-    def scan_websites(self, websites):
+    async def scan_websites(self, websites):
         with ThreadPoolExecutor() as executor:
-            for website in tqdm(websites, desc="Scanning websites", position=1):
-                print(f"\nScanning website: {website}\n")
-                try:
-                    self.crawl_and_scan(website, website)
-                except Exception as ex:
-                    self.logger.error(f"An error occurred while scanning {website}: {ex}")
-                    print(f"An error occurred while scanning {website}: {ex}")
+            await asyncio.gather(*[self.crawl_and_scan(website, website) for website in tqdm(websites, desc="Scanning websites", position=1)])
+
+def setup_logging():
+    logging.basicConfig(level=logging.INFO)
 
 def main():
     try:
-        file_or_single = input("Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): ").lower()
+        setup_logging()
+
+        file_or_single = input(colored("Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): ", 'yellow')).lower()
 
         if file_or_single == 'file':
-            file_path = input("Enter the path to the file containing website URLs: ")
+            file_path = input(colored("Enter the path to the file containing website URLs: ", 'yellow'))
             try:
                 websites = WebsiteScanner().get_urls_from_file(file_path)
             except FileNotFoundError:
-                print("File not found. Exiting.")
+                print(colored("File not found. Exiting.", 'red'))
                 return
         elif file_or_single == 'single':
-            website = input("Enter the website URL: ")
+            website = input(colored("Enter the website URL: ", 'yellow'))
             websites = [website]
         else:
-            print("Invalid input. Exiting.")
+            print(colored("Invalid input. Exiting.", 'red'))
             return
 
-        depth = int(input(f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ") or WebsiteScanner.DEFAULT_DEPTH)
+        depth = int(input(colored(f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ", 'yellow')) or WebsiteScanner.DEFAULT_DEPTH)
 
-        print(f"\nScanning {len(websites)} website(s) with recursive depth of {depth}...\n")
+        print(colored(f"\nScanning {len(websites)} website(s) with recursive depth of {depth}...\n", 'blue'))
 
         scanner = WebsiteScanner(depth=depth)
-        scanner.scan_websites(websites)
+        asyncio.run(scanner.scan_websites(websites))
 
-        print("\nScanning completed.")
+        print(colored("\nScanning completed. Detected matches are saved in 'matches.txt'.", 'green'))
 
     except KeyboardInterrupt:
-        print("\nScanning interrupted by the user.")
+        print(colored("\nScanning interrupted by the user.", 'red'))
     except requests.exceptions.RequestException as e:
-        print(f"Request error: {e}")
+        print(colored(f"Request error: {e}", 'red'))
     except Exception as ex:
-        print(f"An error occurred: {ex}")
+        print(colored(f"An unexpected error occurred: {ex}", 'red'))
 
 if __name__ == "__main__":
     main()
