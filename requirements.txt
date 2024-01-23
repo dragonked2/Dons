@@ -1,5 +1,5 @@
+aiohttp==3.8.1
 beautifulsoup4==4.10.0
-requests==2.26.0
+coloredlogs==15.0
+termcolor==1.1.0
 tqdm==4.62.3
-urllib3==1.26.8
-aiohttp
