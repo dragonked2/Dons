@@ -1,11 +1,17 @@
-import os, requests, difflib, logging, urllib3, asyncio, re
+import os
+import difflib
+import logging
+import asyncio
+import re
+import base64
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor
 from termcolor import colored
 from tqdm import tqdm
+import aiohttp
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+logging.basicConfig(level=logging.INFO)
 
 regex_patterns = {
     "Google API Key": r"AIza[0-9A-Za-z\\-_]{35}",
@@ -25,7 +31,6 @@ regex_patterns = {
     "Facebook App ID": r"(?i)(facebook|fb)(.{0,20})?['\"][0-9]{13,17}",
     "Google Cloud Platform API Key": r"(?i)\bAIza[0-9A-Za-z\\-_]{35}\b",
     "Google Cloud Platform OAuth Token": r"[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com",
-    "Twitter Access Token": r"(?i)twitter.*['|\"][0-9a-z]{35,44}['|\"]",
     "Windows Live API Key": r"(?i)windowslive.*['|\"][0-9a-f]{22}['|\"]",
     "Bitcoin Private Key (WIF)": r"[5KL][1-9A-HJ-NP-Za-km-z]{50,51}$",
     "Ethereum Private Key": r"0x[a-fA-F0-9]{64}",
@@ -60,7 +65,6 @@ regex_patterns = {
     "BitShares Private Key": r"BTS[a-zA-Z0-9]{50}",
     "EOSIO Key": r"EOS[a-zA-Z0-9]{50}",
     "IOST Private Key": r"0x[a-fA-F0-9]{64}",
-    "Steem Private Key": r"5[a-zA-Z0-9]{50}",
     "Harmony (ONE) Private Key": r"one1[a-zA-Z0-9]{38}$",
     "Ardor Private Key": r"S[a-zA-Z0-9]{35}$",
     "Decred Private Key": r"Ds[a-zA-Z0-9]{32}$",
@@ -114,17 +118,13 @@ regex_patterns = {
     "Zendesk API Token": r"(?i)zendesk.*['|\"]\w{40}['|\"]",
     "GitLab OAuth Token": r"(?i)gitlab.*['|\"]\w{20,40}['|\"]",
     "Bitbucket OAuth Token": r"(?i)bitbucket.*['|\"]\w{20,40}['|\"]",
-    "Discord Bot Token": r"[\w-]{24}\.[\w-]{6}\.[\w-]{27}",
     "Discord OAuth Token": r"(?i)discord.*['|\"]\w{59}['|\"]",
     "NPM Token": r"(?i)npm[_]?token.*['|\"]\w{64}['|\"]",
     "Confluence API Token": r"(?i)confluence.*['|\"]\w{10}['|\"]",
     "CircleCI API Token": r"(?i)circleci.*['|\"]\w{40}['|\"]",
     "Hootsuite API Token": r"(?i)hootsuite.*['|\"]\w{12}['|\"]",
-    "Sentry API Key": r"(?i)sentry.*['|\"]\w{32}['|\"]",
-    "Mailjet API Token": r"(\w{32}-\w{13})",
     "Twitch Client ID": r"(?i)twitch(.{0,20})?['\"][0-9a-z]{30}['\"]",
     "Twitch OAuth Token": r"oauth:[a-z0-9]+",
-    "Shopify OAuth Token": r"(?i)shopify.*['|\"]\w{20}['|\"]",
     "Zendesk OAuth Token": r"(?i)zendesk.*['|\"]\w{20}['|\"]",
     "Salesforce OAuth Token": r"(?i)salesforce.*['|\"]\w{300}['|\"]",
     "Atlassian OAuth Token": r"(?i)atlassian.*['|\"]\w{300}['|\"]",
@@ -141,12 +141,10 @@ regex_patterns = {
     "GitKraken OAuth Token": r"(?i)gitkraken.*['|\"]\w{64}['|\"]",
     "Dropbox API Token": r"(?i)dropbox.*['|\"]\w{64}['|\"]",
     "Auth0 API Token": r"(?i)auth0.*['|\"]\w{16}['|\"]",
-    "Wix API Key": r"(?i)wix.*['|\"]\w{32}['|\"]",
     "Okta API Token": r"(?i)okta.*['|\"]\w{50}['|\"]",
     "Keybase PGP Key": r"(?i)keybase.*['|\"]\w{64}['|\"]",
     "HashiCorp Vault Token": r"(?i)vault.*['|\"]\w{64}['|\"]",
     "Twilio Auth Token": r"(?i)twilio.*['|\"]\w{32}['|\"]",
-    "PagerDuty API Key": r"(?i)pagerduty.*['|\"]\w{20}['|\"]",
     "SendGrid API Key": r"(?i)sendgrid.*['|\"]\w{68}['|\"]",
     "Mixpanel API Key": r"(?i)mixpanel.*['|\"]\w{32}['|\"]",
     "AWS Cognito ID Token": r"(?i)cognito.*['|\"]\w{115}['|\"]",
@@ -175,7 +173,6 @@ regex_patterns = {
     "JIRA API Key": r"(?i)jira.*['|\"]\w{16}['|\"]",
     "SendinBlue API Key": r"(?i)sendinblue.*['|\"]\w{64}['|\"]",
     "Zoho API Key": r"(?i)zoho.*['|\"]\w{32}['|\"]",
-    "SoundCloud API Key": r"(?i)soundcloud.*['|\"]\w{32}['|\"]",
     "Yandex Disk OAuth Token": r"(?i)yandex.*['|\"]\w{52}['|\"]",
     "Asana Access Token": r"(?i)asana.*['|\"]\w{64}['|\"]",
     "Heroku API Key": r"(?i)heroku.*['|\"]\w{32}['|\"]",
@@ -187,7 +184,6 @@ regex_patterns = {
     "Twilio API Key": r"(?i)twilio.*['|\"]\w{32}['|\"]",
     "Mandrill API Key": r"(?i)mandrill.*['|\"]\w{42}['|\"]",
     "Intercom API Key": r"(?i)intercom.*['|\"]\w{64}['|\"]",
-    "Shopify Storefront Access Token": r"(?i)shopify.*['|\"]\w{35}['|\"]",
     "Vimeo OAuth Token": r"(?i)vimeo.*['|\"]\w{40}['|\"]",
     "Mailgun API Key": r"(?i)mailgun.*['|\"]\w{32}['|\"]",
     "Zendesk OAuth Token": r"(?i)zendesk.*['|\"]\w{40}['|\"]",
@@ -199,7 +195,6 @@ regex_patterns = {
     "Braintree API Key": r"(?i)braintree.*['|\"]\w{32}['|\"]",
     "Coinbase API Key": r"(?i)coinbase.*['|\"]\w{32}['|\"]",
     "Splunk API Key": r"(?i)splunk.*['|\"]\w{64}['|\"]",
-    "AWS IAM Secret Key": r"(?i)aws.*['|\"]\w{40}['|\"]",
     "Firebase Cloud Messaging (FCM) Key": r"AAAA[a-zA-Z0-9_-]{140,340}",
     "API Token": r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
     "Access Token": r"['|\"]?access[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9-_]+)['|\"]?",
@@ -316,41 +311,50 @@ regex_patterns = {
 }
 
 
+
 class WebsiteScanner:
     DEFAULT_DEPTH = 4
 
     def __init__(self, depth=None):
         self.depth = depth or self.DEFAULT_DEPTH
         self.results = set()
+        self.visited_urls = set()
         self.logger = logging.getLogger(__name__)
-        self.matches_file_path = os.path.join(os.path.expanduser("~"), "Desktop", "matches.txt")
+        self.matches_file_path = os.path.join(
+            os.path.expanduser("~"), "Desktop", "matches.txt"
+        )
 
-    def is_same_domain(self, base_url, target_url):
-        return urlparse(base_url).netloc == urlparse(target_url).netloc
-
-    def get_urls_from_file(self, file_path):
+    async def fetch(self, session, url):
         try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                return [line.strip() for line in file.readlines()]
-        except FileNotFoundError as e:
-            self.logger.error(f"File not found: {file_path}")
-            raise e
+            async with session.get(url, verify_ssl=False, timeout=10) as response:
+                return await response.text()
+        except Exception as e:
+            self.logger.error(f"Error accessing {url}: {e}")
+            return None
 
-    def crawl_and_scan(self, url, base_url):
-        if self.depth <= 0 or not self.is_same_domain(base_url, url):
+    async def crawl_and_scan(self, session, url, base_url):
+        if (
+            self.depth <= 0
+            or not self.is_same_domain(base_url, url)
+            or url in self.visited_urls
+        ):
             return
 
         try:
-            response = self.fetch(url)
-            if response.status_code == 403:
-                self.logger.warning(f"Skipping {url} due to 403 Forbidden error")
+            self.visited_urls.add(url)
+
+            html_content = await self.fetch(session, url)
+            if not html_content:
                 return
 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            js_urls = [urljoin(url, script['src']) for script in soup.find_all('script', src=True)]
+            soup = BeautifulSoup(html_content, "html.parser")
+            js_urls = [
+                urljoin(url, script["src"])
+                for script in soup.find_all("script", src=True)
+            ]
 
-            with ThreadPoolExecutor() as executor:
-                results = [self.scan_js_file(js_url) for js_url in js_urls]
+            tasks = [self.scan_js_file(session, js_url) for js_url in js_urls]
+            results = await asyncio.gather(*tasks)
 
             unique_results = self.cluster_matches(results)
             for js_url, matches in unique_results:
@@ -359,59 +363,81 @@ class WebsiteScanner:
                     self.results.add(result_key)
                     self.save_and_display_matches(url, js_url, matches)
 
-            next_depth_urls = [urljoin(url, link['href']) for link in soup.find_all('a', href=True)]
-            for u in next_depth_urls:
-                self.crawl_and_scan(u, url)
+            next_depth_urls = [
+                urljoin(url, link["href"]) for link in soup.find_all("a", href=True)
+            ]
+            await asyncio.gather(
+                *(self.crawl_and_scan(session, u, url) for u in next_depth_urls)
+            )
 
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Error accessing {url}: {e}")
         except Exception as ex:
             self.logger.error(f"An unexpected error occurred: {ex}")
 
-    def scan_js_file(self, js_url):
+    async def scan_js_file(self, session, js_url):
         try:
-            response = self.fetch(js_url)
-            response.raise_for_status()
+            js_content = await self.fetch(session, js_url)
+            if not js_content:
+                return js_url, []
 
-            js_content = response.text
+            if js_content.startswith("data:application/x-javascript;base64,"):
+                js_content = base64.b64decode(js_content.split(",")[1]).decode("utf-8")
+
             matches = []
-
             for key, pattern in regex_patterns.items():
                 match_objects = re.finditer(pattern, js_content)
-                for match in match_objects:
-                    matches.append((key, match.group(0).strip()))
+                matches.extend((key, match.group(0).strip()) for match in match_objects)
 
-            return js_url, matches
+            if matches:
+                return js_url, matches
+            else:
+                return js_url, []
 
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             self.logger.error(f"Error accessing {js_url}: {e}")
             return js_url, []
-        except Exception as ex:
-            self.logger.error(f"An unexpected error occurred while scanning {js_url}: {ex}")
-            return js_url, []
 
-    def fetch(self, url):
-        return requests.get(url, verify=False, timeout=10)
+    def is_same_domain(self, base_url, target_url):
+        return (
+            base_url.split("//")[-1].split("/")[0]
+            == target_url.split("//")[-1].split("/")[0]
+        )
 
     def save_and_display_matches(self, website_url, js_url, matches):
-        with open(self.matches_file_path, 'a', encoding='utf-8') as file:
-            file.write(f"\nMatches found at {website_url}, JavaScript file: {js_url}:\n")
+        with open(self.matches_file_path, "a", encoding="utf-8") as file:
+            file.write(
+                f"\nMatches found at {website_url}, JavaScript file: {js_url}:\n"
+            )
 
             if matches:
                 for key, snippet in matches:
                     file.write(f"  Key: {key}\n")
-                    file.write(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]\n")
+                    file.write(
+                        f"    Snippet: {snippet}\n"
+                        if snippet
+                        else f"    Snippet: [Unable to retrieve snippet]\n"
+                    )
             else:
                 file.write("  No matches found.\n")
 
-        self.logger.info(colored(f"\nMatches found at {website_url}, JavaScript file: {js_url}:", 'green'))
+        self.logger.info(
+            colored(
+                f"\nMatches found at {website_url}, JavaScript file: {js_url}:", "green"
+            )
+        )
 
         if matches:
             for key, snippet in matches:
-                self.logger.info(colored(f"  Key: {key}", 'cyan'))
-                self.logger.info(colored(f"    Snippet: {snippet}\n" if snippet else f"    Snippet: [Unable to retrieve snippet]", 'yellow'))
+                self.logger.info(colored(f"  Key: {key}", "cyan"))
+                self.logger.info(
+                    colored(
+                        f"    Snippet: {snippet}\n"
+                        if snippet
+                        else f"    Snippet: [Unable to retrieve snippet]",
+                        "yellow",
+                    )
+                )
         else:
-            self.logger.info(colored("  No matches found.", 'red'))
+            self.logger.info(colored("  No matches found.", "red"))
 
     def cluster_matches(self, results):
         clustered_results = {}
@@ -420,7 +446,10 @@ class WebsiteScanner:
                 clustered_results[js_url] = matches
             else:
                 for key, snippet in matches:
-                    found = any(self.calculate_similarity(existing_snippet, snippet) > 90 for _, existing_snippet in clustered_results[js_url])
+                    found = any(
+                        self.calculate_similarity(existing_snippet, snippet) > 90
+                        for _, existing_snippet in clustered_results[js_url]
+                    )
                     if not found:
                         clustered_results[js_url].append((key, snippet))
 
@@ -431,47 +460,75 @@ class WebsiteScanner:
         return seq_matcher.ratio() * 100
 
     def scan_websites(self, websites):
-        for website in tqdm(websites, desc="Scanning websites", position=1):
-            self.crawl_and_scan(website, website)
+        async def scan_single_website(session, website):
+            await self.crawl_and_scan(session, website, website)
 
-def setup_logging():
-    logging.basicConfig(level=logging.INFO)
+        async def main():
+            connector = aiohttp.TCPConnector(limit=100)
+            async with aiohttp.ClientSession(connector=connector) as session:
+                await asyncio.gather(
+                    *(scan_single_website(session, website) for website in websites)
+                )
 
-def main():
-    try:
-        setup_logging()
+        asyncio.run(main())
 
-        file_or_single = input(colored("Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): ", 'yellow')).lower()
-
-        websites = []
-        if file_or_single in ['file', 'single']:
-            try:
-                websites = WebsiteScanner().get_urls_from_file(input(colored("Enter the path to the file containing website URLs: ", 'yellow'))) if file_or_single == 'file' else [input(colored("Enter the website URL: ", 'yellow'))]
-            except FileNotFoundError:
-                logging.error("File not found. Exiting.")
-                return
-        else:
-            logging.error("Invalid input. Exiting.")
-            return
-
-        try:
-            depth = max(0, int(input(colored(f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ", 'yellow')) or WebsiteScanner.DEFAULT_DEPTH))
-        except ValueError as ve:
-            logging.error(f"Invalid depth value: {ve}. Using default depth.")
-            depth = WebsiteScanner.DEFAULT_DEPTH
-
-        print(colored(f"\nScanning {len(websites)} website(s) with recursive depth of {depth}...\n", 'cyan'))
-
-        scanner = WebsiteScanner(depth)
-        scanner.scan_websites(websites)
-
-        print(colored("\nScan completed successfully.", 'green'))
-
-    except KeyboardInterrupt:
-        print(colored("\nScan aborted by the user.", 'yellow'))
-    except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
 
 if __name__ == "__main__":
-    main()
+    try:
+        file_or_single = input(
+            colored(
+                "Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): ",
+                "yellow",
+            )
+        ).lower()
 
+        websites = []
+        if file_or_single in ["file", "single"]:
+            try:
+                websites = (
+                    WebsiteScanner().get_urls_from_file(
+                        input(
+                            colored(
+                                "Enter the path to the file containing website URLs: ",
+                                "yellow",
+                            )
+                        )
+                    )
+                    if file_or_single == "file"
+                    else [input(colored("Enter the website URL: ", "yellow"))]
+                )
+            except FileNotFoundError:
+                logging.error("File not found. Exiting.")
+                exit()
+
+            depth = max(
+                0,
+                int(
+                    input(
+                        colored(
+                            f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ",
+                            "yellow",
+                        )
+                    )
+                    or WebsiteScanner.DEFAULT_DEPTH
+                ),
+            )
+            print(
+                colored(
+                    f"\nScanning {len(websites)} website(s) with recursive depth of {depth}...\n",
+                    "cyan",
+                )
+            )
+
+            scanner = WebsiteScanner(depth)
+            scanner.scan_websites(websites)
+
+            print(colored("\nScan completed successfully.", "green"))
+
+        else:
+            logging.error("Invalid input. Exiting.")
+
+    except KeyboardInterrupt:
+        print(colored("\nScan aborted by the user.", "yellow"))
+    except Exception as e:
+        logging.error(f"An unexpected error occurred: {e}")
