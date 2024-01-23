@@ -1,64 +1,91 @@
 ![380024582_904511401099198_7120165947283670814_n](https://github.com/dragonked2/Dons/assets/66541902/ad02ae1e-8f30-4ef3-ad35-95735f1cfeb7)
 
-# WebScanner - Website JavaScript Scanner
 
-## Overview
+```markdown
 
-WebScanner is a Python tool designed to scan websites and identify potentially sensitive information in JavaScript files. It utilizes regular expressions to search for patterns associated with API keys, access tokens, and other sensitive data. The tool is capable of scanning multiple websites from a file or a single website and provides detailed information about the identified matches.
+# Dons Js Scanner: Detect Secrets in JavaScript Files
 
-## Features
+Dons Js Scanner is a powerful Python tool crafted by [Ali Essam](https://www.linkedin.com/in/dragonked2/) for scanning websites and uncovering potential sensitive information within JavaScript files. Harnessing the strength of asynchronous programming, this tool ensures efficient web crawling and in-depth analysis.
 
-- **Versatile Scanning:** WebScanner employs a wide range of regular expressions to identify sensitive information, including API keys, access tokens, and various credentials.
-- **Multi-Website Scanning:** Scan multiple websites listed in a file or provide a single website URL for analysis.
-- **Recursive Depth:** Specify the depth of recursion for scanning linked pages within a website.
-- **Concurrency:** Utilizes multithreading to enhance scanning speed by concurrently analyzing JavaScript files.
+## Features 🚀
 
-## Installation
+- **Asynchronous Scanning:** Utilizes asyncio and aiohttp for speedy web crawling and JavaScript file analysis.
+- **Sensitive Information Detection:** Identifies potential sensitive information using pre-defined regex patterns.
+- **Result Clustering:** Presents cleaner output by clustering similar results.
 
-To use WebScanner, ensure you have Python installed. Install the required dependencies using the following command:
+## Getting Started 🛠️
 
-```bash
-pip install requests beautifulsoup4 tqdm
-```
+### Prerequisites 📋
 
-## Usage
+- Python 3.7 or higher
+- Dependencies: aiohttp, BeautifulSoup, termcolor, tqdm, coloredlogs
 
-1. Run the script by executing the following command in your terminal:
+### Installation 🚀
 
-```bash
-python webscanner.py
-```
+1. **Clone the repository:**
 
-2. Choose whether to scan multiple websites from a file or a single website.
-3. Provide the necessary inputs, such as the file path or website URL and the desired recursive depth.
-4. Let WebScanner perform the scanning process, and the results will be displayed on the console.
+   ```bash
+   git clone https://github.com/dragonked2/Dons.git
+   cd Dons
+   ```
 
-## Examples
+2. **Install dependencies:**
 
-### Scanning Multiple Websites from a File
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-```bash
-Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): file
-Enter the path to the file containing website URLs: websites.txt
-Enter the recursive depth for scanning (default is 4): 3
-```
+## Usage 🌐
 
-### Scanning a Single Website
+### Scan Single Website 🕸️
 
 ```bash
-Scan multiple websites from a file or a single website? (Enter 'file' or 'single'): single
-Enter the website URL: https://example.com
-Enter the recursive depth for scanning (default is 4): 2
+python main.py
 ```
 
-## Disclaimer
+Follow the prompts to enter a single website URL for scanning.
 
-WebScanner is intended for educational and security research purposes only. Be sure to have the necessary permissions before scanning any website. The tool is not responsible for any misuse or illegal activities.
+### Scan Multiple Websites from a File 📄
 
-## Contributions
+```bash
+python main.py
+```
 
-Contributions are welcome! Feel free to submit issues or pull requests to enhance the functionality of WebScanner.
+Choose the option to scan multiple websites from a file and provide the file path.
 
-## License
-## Ali Essam
-This tool is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+### Customizing Scan Depth ⚙️
+
+You can customize the recursive depth for scanning when prompted. The default depth is set to 4.
+
+## Results 📊
+
+Detected matches will be saved to a file on your desktop and displayed in the console.
+
+## Example 🎉
+
+```bash
+Matches found at https://example.com, JavaScript file: https://example.com/js/main.js:
+
+  Key: Google API Key
+    Snippet: AIza...
+
+  Key: Google Cloud Pub/Sub Emulator Host
+    Snippet: google.pubsub.emulator.host = 'example.appspot.com'
+```
+
+## Contributions 🤝
+
+Contributions are always welcome! Feel free to open issues or pull requests.
+
+## Connect with Me 🌐
+## Ali Essam 📄
+- [LinkedIn](https://www.linkedin.com/in/dragonked2/)
+
+## License 📄
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+<div align="center">
+  <p>Feel free to star ⭐️ the repository if you find it helpful! 🚀</p>
+</div>
+```
