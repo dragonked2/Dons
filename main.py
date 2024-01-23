@@ -10,8 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 from termcolor import colored
 from tqdm import tqdm
 import aiohttp
+import coloredlogs  # Install using: pip install coloredlogs
 
-logging.basicConfig(level=logging.INFO)
+# Set up colored logging
+coloredlogs.install(level="INFO")
 
 regex_patterns = {
     "Google API Key": r"AIza[0-9A-Za-z\\-_]{35}",
@@ -315,7 +317,7 @@ regex_patterns = {
 class WebsiteScanner:
     DEFAULT_DEPTH = 4
 
-    def __init__(self, depth=None):
+    def __init__(self, depth: int = None):
         self.depth = depth or self.DEFAULT_DEPTH
         self.results = set()
         self.visited_urls = set()
@@ -326,13 +328,17 @@ class WebsiteScanner:
 
     async def fetch(self, session, url):
         try:
-            async with session.get(url, verify_ssl=False, timeout=10) as response:
-                return await response.text()
+            async with session.get(url, verify_ssl=False, timeout=15) as response:
+                return await response.read(), response.content_type
+        except aiohttp.ClientError as ce:
+            self.logger.error(f"Error accessing {url}: {ce}")
+        except asyncio.TimeoutError:
+            self.logger.error(f"Timeout accessing {url}")
         except Exception as e:
-            self.logger.error(f"Error accessing {url}: {e}")
-            return None
+            self.logger.error(f"An unexpected error occurred while accessing {url}: {e}")
+        return None, None
 
-    async def crawl_and_scan(self, session, url, base_url):
+    async def crawl_and_scan(self, session, url, base_url, redirects=2):
         if (
             self.depth <= 0
             or not self.is_same_domain(base_url, url)
@@ -343,11 +349,11 @@ class WebsiteScanner:
         try:
             self.visited_urls.add(url)
 
-            html_content = await self.fetch(session, url)
-            if not html_content:
+            html_content, content_type = await self.fetch(session, url)
+            if not html_content or "text/html" not in content_type:
                 return
 
-            soup = BeautifulSoup(html_content, "html.parser")
+            soup = BeautifulSoup(html_content, "lxml")
             js_urls = [
                 urljoin(url, script["src"])
                 for script in soup.find_all("script", src=True)
@@ -366,21 +372,25 @@ class WebsiteScanner:
             next_depth_urls = [
                 urljoin(url, link["href"]) for link in soup.find_all("a", href=True)
             ]
-            await asyncio.gather(
-                *(self.crawl_and_scan(session, u, url) for u in next_depth_urls)
-            )
+
+            next_depth_tasks = [
+                asyncio.create_task(
+                    self.crawl_and_scan(session, u, url, redirects=redirects - 1)
+                ) for u in next_depth_urls
+            ]
+            await asyncio.gather(*next_depth_tasks)
 
         except Exception as ex:
             self.logger.error(f"An unexpected error occurred: {ex}")
 
     async def scan_js_file(self, session, js_url):
         try:
-            js_content = await self.fetch(session, js_url)
-            if not js_content:
+            js_content, content_type = await self.fetch(session, js_url)
+            if not js_content or "application/javascript" not in content_type:
                 return js_url, []
 
-            if js_content.startswith("data:application/x-javascript;base64,"):
-                js_content = base64.b64decode(js_content.split(",")[1]).decode("utf-8")
+            if isinstance(js_content, bytes):
+                js_content = js_content.decode("utf-8")
 
             matches = []
             for key, pattern in regex_patterns.items():
@@ -392,9 +402,13 @@ class WebsiteScanner:
             else:
                 return js_url, []
 
+        except aiohttp.ClientError as ce:
+            self.logger.error(f"Error accessing {js_url}: {ce}")
+        except asyncio.TimeoutError:
+            self.logger.error(f"Timeout accessing {js_url}")
         except Exception as e:
-            self.logger.error(f"Error accessing {js_url}: {e}")
-            return js_url, []
+            self.logger.error(f"An unexpected error occurred while accessing {js_url}: {e}")
+        return js_url, []
 
     def is_same_domain(self, base_url, target_url):
         return (
@@ -420,24 +434,18 @@ class WebsiteScanner:
                 file.write("  No matches found.\n")
 
         self.logger.info(
-            colored(
-                f"\nMatches found at {website_url}, JavaScript file: {js_url}:", "green"
-            )
-        )
+            f"\nMatches found at {website_url}, JavaScript file: {js_url}:")
 
         if matches:
             for key, snippet in matches:
-                self.logger.info(colored(f"  Key: {key}", "cyan"))
+                self.logger.info(f"  Key: {key}")
                 self.logger.info(
-                    colored(
-                        f"    Snippet: {snippet}\n"
-                        if snippet
-                        else f"    Snippet: [Unable to retrieve snippet]",
-                        "yellow",
-                    )
+                    f"    Snippet: {snippet}\n"
+                    if snippet
+                    else f"    Snippet: [Unable to retrieve snippet]"
                 )
         else:
-            self.logger.info(colored("  No matches found.", "red"))
+            self.logger.info("  No matches found.")
 
     def cluster_matches(self, results):
         clustered_results = {}
@@ -471,8 +479,7 @@ class WebsiteScanner:
                 )
 
         asyncio.run(main())
-
-
+        
 if __name__ == "__main__":
     try:
         file_or_single = input(
@@ -485,45 +492,46 @@ if __name__ == "__main__":
         websites = []
         if file_or_single in ["file", "single"]:
             try:
-                websites = (
-                    WebsiteScanner().get_urls_from_file(
+                if file_or_single == "file":
+                    file_path = os.path.abspath(input(colored("Enter the path to the file containing website URLs: ", "yellow")))
+
+                    try:
+                        with open(file_path, "r") as file:
+                            websites = [line.strip() for line in file.readlines()]
+                    except FileNotFoundError:
+                        logging.error(f"File not found: {file_path}. Exiting.")
+                        exit()
+                else:
+                    websites = [input(colored("Enter the website URL: ", "yellow"))]
+
+                depth = max(
+                    0,
+                    int(
                         input(
                             colored(
-                                "Enter the path to the file containing website URLs: ",
+                                f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ",
                                 "yellow",
                             )
                         )
-                    )
-                    if file_or_single == "file"
-                    else [input(colored("Enter the website URL: ", "yellow"))]
+                        or WebsiteScanner.DEFAULT_DEPTH
+                    ),
                 )
-            except FileNotFoundError:
-                logging.error("File not found. Exiting.")
-                exit()
-
-            depth = max(
-                0,
-                int(
-                    input(
-                        colored(
-                            f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH}): ",
-                            "yellow",
-                        )
+                print(
+                    colored(
+                        f"\nScanning {len(websites)} website(s) with recursive depth of {depth}...\n",
+                        "cyan",
                     )
-                    or WebsiteScanner.DEFAULT_DEPTH
-                ),
-            )
-            print(
-                colored(
-                    f"\nScanning {len(websites)} website(s) with recursive depth of {depth}...\n",
-                    "cyan",
                 )
-            )
 
-            scanner = WebsiteScanner(depth)
-            scanner.scan_websites(websites)
+                scanner = WebsiteScanner(depth)
+                scanner.scan_websites(websites)
 
-            print(colored("\nScan completed successfully.", "green"))
+                print(colored("\nScan completed successfully.", "green"))
+
+            except KeyboardInterrupt:
+                print(colored("\nScan aborted by the user.", "yellow"))
+            except Exception as e:
+                logging.error(f"An unexpected error occurred: {e}")
 
         else:
             logging.error("Invalid input. Exiting.")
@@ -532,3 +540,6 @@ if __name__ == "__main__":
         print(colored("\nScan aborted by the user.", "yellow"))
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
+
+    # Add this line to keep the console open
+    input("Press Enter to exit.")
