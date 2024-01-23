@@ -10,10 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from termcolor import colored
 from tqdm import tqdm
 import aiohttp
-import coloredlogs  # Install using: pip install coloredlogs
 
-# Set up colored logging
-coloredlogs.install(level="INFO")
+logging.basicConfig(level=logging.INFO)
 
 regex_patterns = {
     "Google API Key": r"AIza[0-9A-Za-z\\-_]{35}",
@@ -328,15 +326,15 @@ class WebsiteScanner:
 
     async def fetch(self, session, url):
         try:
-            async with session.get(url, verify_ssl=False, timeout=15) as response:
-                return await response.read(), response.content_type
+            async with session.get(url, verify_ssl=True, timeout=15) as response:
+                return await response.text()
         except aiohttp.ClientError as ce:
             self.logger.error(f"Error accessing {url}: {ce}")
         except asyncio.TimeoutError:
             self.logger.error(f"Timeout accessing {url}")
         except Exception as e:
             self.logger.error(f"An unexpected error occurred while accessing {url}: {e}")
-        return None, None
+        return None
 
     async def crawl_and_scan(self, session, url, base_url, redirects=2):
         if (
@@ -349,8 +347,8 @@ class WebsiteScanner:
         try:
             self.visited_urls.add(url)
 
-            html_content, content_type = await self.fetch(session, url)
-            if not html_content or "text/html" not in content_type:
+            html_content = await self.fetch(session, url)
+            if not html_content:
                 return
 
             soup = BeautifulSoup(html_content, "lxml")
@@ -385,12 +383,12 @@ class WebsiteScanner:
 
     async def scan_js_file(self, session, js_url):
         try:
-            js_content, content_type = await self.fetch(session, js_url)
-            if not js_content or "application/javascript" not in content_type:
+            js_content = await self.fetch(session, js_url)
+            if not js_content:
                 return js_url, []
 
-            if isinstance(js_content, bytes):
-                js_content = js_content.decode("utf-8")
+            if js_content.startswith("data:application/x-javascript;base64,"):
+                js_content = base64.b64decode(js_content.split(",")[1]).decode("utf-8")
 
             matches = []
             for key, pattern in regex_patterns.items():
@@ -434,18 +432,24 @@ class WebsiteScanner:
                 file.write("  No matches found.\n")
 
         self.logger.info(
-            f"\nMatches found at {website_url}, JavaScript file: {js_url}:")
+            colored(
+                f"\nMatches found at {website_url}, JavaScript file: {js_url}:", "green"
+            )
+        )
 
         if matches:
             for key, snippet in matches:
-                self.logger.info(f"  Key: {key}")
+                self.logger.info(colored(f"  Key: {key}", "cyan"))
                 self.logger.info(
-                    f"    Snippet: {snippet}\n"
-                    if snippet
-                    else f"    Snippet: [Unable to retrieve snippet]"
+                    colored(
+                        f"    Snippet: {snippet}\n"
+                        if snippet
+                        else f"    Snippet: [Unable to retrieve snippet]",
+                        "yellow",
+                    )
                 )
         else:
-            self.logger.info("  No matches found.")
+            self.logger.info(colored("  No matches found.", "red"))
 
     def cluster_matches(self, results):
         clustered_results = {}
@@ -479,7 +483,7 @@ class WebsiteScanner:
                 )
 
         asyncio.run(main())
-        
+
 if __name__ == "__main__":
     try:
         file_or_single = input(
