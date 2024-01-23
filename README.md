@@ -1,91 +1,105 @@
 ![380024582_904511401099198_7120165947283670814_n](https://github.com/dragonked2/Dons/assets/66541902/ad02ae1e-8f30-4ef3-ad35-95735f1cfeb7)
 
 
-```markdown
+<!DOCTYPE html>
+<html lang="en">
 
-# Dons Js Scanner: Detect Secrets in JavaScript Files
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+Dons Js Scanner
+</head>
 
-Dons Js Scanner is a powerful Python tool crafted by [Ali Essam](https://www.linkedin.com/in/dragonked2/) for scanning websites and uncovering potential sensitive information within JavaScript files. Harnessing the strength of asynchronous programming, this tool ensures efficient web crawling and in-depth analysis.
+<body>
 
-## Features 🚀
+  <h1>Dons Js Scanner</h1>
 
-- **Asynchronous Scanning:** Utilizes asyncio and aiohttp for speedy web crawling and JavaScript file analysis.
-- **Sensitive Information Detection:** Identifies potential sensitive information using pre-defined regex patterns.
-- **Result Clustering:** Presents cleaner output by clustering similar results.
+  <p>Dons Js Scanner is a Python tool designed by <a href="https://www.linkedin.com/in/dragonked2/">Ali Essam</a> to scan websites and uncover potential sensitive information within JavaScript files. It utilizes asynchronous programming for efficient web crawling and in-depth analysis.</p>
 
-## Getting Started 🛠️
+  <img src="https://github.com/dragonked2/Dons/assets/66541902/ad02ae1e-8f30-4ef3-ad35-95735f1cfeb7" alt="Dons Js Scanner">
 
-### Prerequisites 📋
+  <h2>Features</h2>
 
-- Python 3.7 or higher
-- Dependencies: aiohttp, BeautifulSoup, termcolor, tqdm, coloredlogs
+  <ul>
+    <li><strong>Asynchronous Scanning:</strong> Utilizes asyncio and aiohttp for speedy web crawling and JavaScript file analysis.</li>
+    <li><strong>Sensitive Information Detection:</strong> Identifies potential sensitive information using pre-defined regex patterns.</li>
+    <li><strong>Result Clustering:</strong> Presents cleaner output by clustering similar results.</li>
+  </ul>
 
-### Installation 🚀
+  <h2>Getting Started</h2>
 
-1. **Clone the repository:**
+  <h3>Prerequisites</h3>
 
-   ```bash
-   git clone https://github.com/dragonked2/Dons.git
-   cd Dons
-   ```
+  <ul>
+    <li>Python 3.7 or higher</li>
+    <li>Dependencies: aiohttp, BeautifulSoup, termcolor, tqdm, coloredlogs</li>
+  </ul>
 
-2. **Install dependencies:**
+  <h3>Installation</h3>
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+  <ol>
+    <li><strong>Clone the repository:</strong>
+      <pre><code>git clone https://github.com/dragonked2/Dons.git
+cd Dons
+      </code></pre>
+    </li>
+    <li><strong>Install dependencies:</strong>
+      <pre><code>pip install -r requirements.txt
+      </code></pre>
+    </li>
+  </ol>
 
-## Usage 🌐
+  <h2>Usage</h2>
 
-### Scan Single Website 🕸️
+  <h3>Scan Single Website</h3>
 
-```bash
-python main.py
-```
+  <pre><code>python main.py
+  </code></pre>
 
-Follow the prompts to enter a single website URL for scanning.
+  <p>Follow the prompts to enter a single website URL for scanning.</p>
 
-### Scan Multiple Websites from a File 📄
+  <h3>Scan Multiple Websites from a File</h3>
 
-```bash
-python main.py
-```
+  <pre><code>python main.py
+  </code></pre>
 
-Choose the option to scan multiple websites from a file and provide the file path.
+  <p>Choose the option to scan multiple websites from a file and provide the file path.</p>
 
-### Customizing Scan Depth ⚙️
+  <h3>Customizing Scan Depth</h3>
 
-You can customize the recursive depth for scanning when prompted. The default depth is set to 4.
+  <p>You can customize the recursive depth for scanning when prompted. The default depth is set to 4.</p>
 
-## Results 📊
+  <h2>Results</h2>
 
-Detected matches will be saved to a file on your desktop and displayed in the console.
+  <p>Detected matches will be saved to a file on your desktop and displayed in the console.</p>
 
-## Example 🎉
+  <h2>Example</h2>
 
-```bash
-Matches found at https://example.com, JavaScript file: https://example.com/js/main.js:
+  <pre><code>Matches found at https://example.com, JavaScript file: https://example.com/js/main.js:
 
   Key: Google API Key
     Snippet: AIza...
 
   Key: Google Cloud Pub/Sub Emulator Host
     Snippet: google.pubsub.emulator.host = 'example.appspot.com'
-```
+  </code></pre>
 
-## Contributions 🤝
+  <h2>Contributions</h2>
 
-Contributions are always welcome! Feel free to open issues or pull requests.
+  <p>Contributions are always welcome! Feel free to open issues or pull requests.</p>
 
-## Connect with Me 🌐
-## Ali Essam 📄
-- [LinkedIn](https://www.linkedin.com/in/dragonked2/)
+  <h2>Connect with Me</h2>
 
-## License 📄
+  <p><a href="https://www.linkedin.com/in/dragonked2/">Ali Essam - LinkedIn</a></p>
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+  <h2>License</h2>
 
-<div align="center">
-  <p>Feel free to star ⭐️ the repository if you find it helpful! 🚀</p>
-</div>
-```
+  <p>This project is licensed under the MIT License - see the <a href="LICENSE">LICENSE</a> file for details.</p>
+
+  <div align="center">
+    <p>Feel free to star ⭐️ the repository if you find it helpful! 🚀</p>
+  </div>
+
+</body>
+
+</html>
