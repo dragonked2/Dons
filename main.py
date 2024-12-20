@@ -7,6 +7,7 @@ import json
 import csv
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
+from datetime import datetime, timezone
 
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
@@ -18,10 +19,11 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
-import math
 import ssl
 import warnings
-from typing import List, Tuple, Dict
+from typing import List, Tuple
+
+from logging.handlers import RotatingFileHandler
 
 # Suppress specific BeautifulSoup warnings
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -29,12 +31,10 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 # Initialize Rich console
 console = Console(style="green", width=120, height=30)
 
-from logging.handlers import RotatingFileHandler
-
 # Configure logging with rotating file handler
 logger = logging.getLogger("WebsiteScanner")
 logger.setLevel(logging.INFO)
-handler = RotatingFileHandler("website_scanner.log", maxBytes=5*1024*1024, backupCount=2)
+handler = RotatingFileHandler("website_scanner.log", maxBytes=5 * 1024 * 1024, backupCount=2)
 formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
@@ -53,7 +53,6 @@ regex_patterns = {
     "Amazon AWS Access Key ID": re.compile(r"AKIA[0-9A-Z]{16}"),
     "Amazon MWS Auth Token": re.compile(r"amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"),
     "Authorization Bearer Token": re.compile(r"bearer [a-zA-Z0-9_\-\.=]+", re.IGNORECASE),
-    "Authorization Basic Credentials": re.compile(r"basic [a-zA-Z0-9=:_\+\/\-]{5,100}", re.IGNORECASE),
     "JWT Token": re.compile(r"ey[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_.+/=]*$", re.IGNORECASE),
     "Facebook Access Token": re.compile(r"EAACEdEose0cBA[0-9A-Za-z]+"),
     "Facebook App ID": re.compile(r"(?i)(facebook|fb)(.{0,20})?['\"][0-9]{13,17}"),
@@ -82,7 +81,6 @@ regex_patterns = {
     "Chainlink Private Key": re.compile(r"0x[a-fA-F0-9]{64}"),
     "Cosmos Private Key": re.compile(r"0x[a-fA-F0-9]{64}"),
     "Filecoin Private Key": re.compile(r"f1[a-zA-Z0-9]{98}$"),
-    "Algorand Private Key": re.compile(r"([A-Z2-7]{58})"),
     "Solana Private Key": re.compile(r"seed_[a-zA-Z0-9]{58}"),
     "Terra Private Key": re.compile(r"terravaloper[a-zA-Z0-9]{39}$"),
     "Polygon (Matic) Private Key": re.compile(r"0x[a-fA-F0-9]{64}"),
@@ -240,7 +238,6 @@ regex_patterns = {
     "Google Cloud Firestore Emulator Indexes File": re.compile(r"(?i)google.*firestore.*emulator.*indexes\s*=\s*['|\"].*\.json['|\"]"),
     "Google Cloud Firestore Emulator Host": re.compile(r"(?i)google.*firestore.*emulator.*host\s*=\s*['|\"]\w+\.appspot\.com['|\"]"),
     "API Token": re.compile(r"['|\"]?api[_]?key['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9\-_.]+)['|\"]?"),
-    "Access Token": re.compile(r"['|\"]?access[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9\-_.]+)['|\"]?"),
     "Client Secret": re.compile(r"['|\"]?client[_]?secret['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9\-_.]+)['|\"]?"),
     "API Secret": re.compile(r"['|\"]?api[_]?secret['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9\-_.]+)['|\"]?"),
     "Session Token": re.compile(r"['|\"]?session[_]?token['|\"]?\s*[:=]\s*['|\"]?([a-zA-Z0-9\-_.]+)['|\"]?"),
@@ -257,7 +254,6 @@ regex_patterns = {
     "Zcash Transparent Address": re.compile(r"t1[a-zA-Z0-9]{33}$"),
     "Tezos Public Key": re.compile(r"tz[1-9A-HJ-NP-Za-km-z]{34}$"),
     "Cardano Extended Public Key": re.compile(r"xpub[a-zA-Z0-9]{182}$"),
-    "EOS Account Name": re.compile(r"[a-z1-5]{1,12}$"),
     "Stellar Account ID": re.compile(r"G[a-zA-Z0-9]{54}$"),
     "NEO Wallet Address": re.compile(r"A[a-zA-Z0-9]{33}$"),
     "IOTA Address": re.compile(r"[A-Z9]{90}"),
@@ -322,12 +318,11 @@ regex_patterns = {
     "Google Cloud Firebase Dynamic Links API Key": re.compile(r"(?i)google.*firebase.*dynamic.*links.*api.*key\s*=\s*['|\"]\w{39}['|\"]"),
 }
 
-
-
 class WebsiteScanner:
     DEFAULT_DEPTH = 4
     DEFAULT_CONCURRENCY = 50
     RETRY_LIMIT = 3
+    MAX_URLS = 1000  # Maximum number of URLs to scan to prevent infinite loops
 
     def __init__(self, depth: int = None, concurrency: int = None, output_format: str = "txt", discord_webhook: str = None):
         self.depth = depth or self.DEFAULT_DEPTH
@@ -340,15 +335,14 @@ class WebsiteScanner:
         self.results = set()
         self.visited_urls = set()
         self.js_files_scanned = set()
+        self.url_count = 0  # To track the number of URLs scanned
         self.ssl_context = ssl.create_default_context()
-        self.ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
+        self.ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')  # Lower security level for compatibility; adjust as needed
         logger.info(f"Initialized WebsiteScanner with depth={self.depth}, concurrency={self.concurrency}, output_format={self.output_format}")
 
     @staticmethod
     def get_user_input() -> Tuple[List[str], int, int, str, str]:
         header = r"""
-
-
     ######################################################################
     #    ____                      _____                                 #
     #   / __ \____  ____  _____   / ___/_________ _____  ____  ___  _____#
@@ -356,7 +350,7 @@ class WebsiteScanner:
     # / /_/ / /_/ / / / (__  )   ___/ / /__/ /_/ / / / / / / /  __/ /    #
     #/_____/\____/_/ /_/____/   /____/\___/\__,_/_/ /_/_/ /_/\___/_/     #
     ######################################################################
-                                                             #By Ali Essam
+                                                           #By Ali Essam
 
 
         """
@@ -442,7 +436,7 @@ class WebsiteScanner:
     async def fetch(self, url: str, retry_count: int = 0) -> Tuple[str, str]:
         async with self.sem:
             try:
-                async with self.session.get(url) as response:
+                async with self.session.get(url, ssl=self.ssl_context) as response:
                     if response.status == 200:
                         data = await response.read()
                         encoding = response.charset or 'utf-8'
@@ -451,6 +445,8 @@ class WebsiteScanner:
                         return text, content_type
                     else:
                         logger.warning(f"Non-200 status code {response.status} for URL: {url}")
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout error fetching URL {url}")
             except Exception as e:
                 logger.error(f"Error fetching URL {url}: {e}")
 
@@ -461,7 +457,7 @@ class WebsiteScanner:
                 logger.error(f"Failed to fetch URL after {self.RETRY_LIMIT} retries: {url}")
                 return "", ""
 
-    async def crawl_and_scan(self, url: str, base_url: str, current_depth: int):
+    async def crawl_and_scan(self, url: str, base_url: str, current_depth: int, progress_task):
         if current_depth > self.depth:
             return
         parsed_base = urlparse(base_url)
@@ -470,8 +466,12 @@ class WebsiteScanner:
             return
         if url in self.visited_urls:
             return
+        if self.url_count >= self.MAX_URLS:
+            logger.info(f"Reached maximum URL limit of {self.MAX_URLS}. Stopping scan.")
+            return
 
         self.visited_urls.add(url)
+        self.url_count += 1
         logger.debug(f"Crawling URL: {url} at depth {current_depth}")
 
         html_content, content_type = await self.fetch(url)
@@ -489,11 +489,11 @@ class WebsiteScanner:
         # Extract and process external JS files
         js_urls = [urljoin(url, script.get("src")) for script in soup.find_all("script", src=True)]
         js_urls = [js_url for js_url in js_urls if self.is_valid_url(js_url)]
-        tasks = [self.scan_js_file(js_url) for js_url in js_urls if js_url not in self.js_files_scanned]
+        tasks = [self.scan_js_file(js_url, progress_task) for js_url in js_urls if js_url not in self.js_files_scanned]
 
         # Extract and scan inline scripts
         inline_scripts = [script.string for script in soup.find_all("script") if not script.get("src") and script.string]
-        tasks.extend([self.scan_inline_js(script_content, url) for script_content in inline_scripts])
+        tasks.extend([self.scan_inline_js(script_content, url, progress_task) for script_content in inline_scripts])
 
         # Extract and scan JavaScript from event handlers
         event_handlers = ['onclick', 'onload', 'onerror', 'onmouseover', 'onmouseout', 'onkeyup', 'onkeydown']
@@ -504,23 +504,24 @@ class WebsiteScanner:
                 js_code = elem.get(handler)
                 if js_code:
                     inline_js_from_events.append(js_code)
-        tasks.extend([self.scan_inline_js(js_code, url) for js_code in inline_js_from_events])
+        tasks.extend([self.scan_inline_js(js_code, url, progress_task) for js_code in inline_js_from_events])
 
         # Process JS scanning tasks in chunks
         chunk_size = 100  # Adjust based on performance needs
         for i in range(0, len(tasks), chunk_size):
             chunk = tasks[i:i + chunk_size]
-            js_results = await asyncio.gather(*chunk, return_exceptions=True)
+            try:
+                js_results = await asyncio.gather(*chunk, return_exceptions=True)
+            except Exception as e:
+                logger.error(f"Error during JS scanning tasks: {e}")
+                continue
+
             for result in js_results:
                 if isinstance(result, Exception):
                     logger.error(f"Error during JS scanning: {result}")
                     continue
-                js_url, matches = result
-                if matches:
-                    result_key = (js_url, tuple(matches))
-                    if result_key not in self.results:
-                        self.results.add(result_key)
-                        await self.save_and_display_matches(url, js_url, matches)
+                # Result is already processed in scan_js_file and scan_inline_js
+                progress_task.update(total=self.url_count)  # Update total dynamically
 
         # Extract and enqueue next URLs
         next_urls = [urljoin(url, link.get("href")) for link in soup.find_all("a", href=True)]
@@ -529,10 +530,10 @@ class WebsiteScanner:
         next_urls = [u for u in next_urls if os.path.splitext(urlparse(u).path)[1].lower() in allowed_extensions]
 
         # Recursively crawl next URLs
-        tasks = [self.crawl_and_scan(u, base_url, current_depth + 1) for u in next_urls]
+        tasks = [self.crawl_and_scan(u, base_url, current_depth + 1, progress_task) for u in next_urls]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def scan_js_file(self, js_url: str) -> Tuple[str, List[Tuple[str, str]]]:
+    async def scan_js_file(self, js_url: str, progress_task) -> Tuple[str, List[Tuple[str, str]]]:
         logger.debug(f"Scanning JS file: {js_url}")
         js_content, _ = await self.fetch(js_url)
         if not js_content:
@@ -541,6 +542,7 @@ class WebsiteScanner:
         self.js_files_scanned.add(js_url)
         js_content = self.beautify_js(js_content)
 
+        # Decode base64 encoded JS if applicable
         if js_content.startswith("data:application/x-javascript;base64,"):
             try:
                 js_content = base64.b64decode(js_content.split(",")[1]).decode("utf-8", errors='replace')
@@ -549,16 +551,22 @@ class WebsiteScanner:
                 return js_url, []
 
         matches = self.search_patterns(js_content)
-
         confirmed_matches = self.confirm_matches(matches)
+        if confirmed_matches:
+            await self.save_and_display_matches(js_url, matches)
+        progress_task.advance()
+
         return js_url, confirmed_matches
 
-    async def scan_inline_js(self, js_content: str, page_url: str) -> Tuple[str, List[Tuple[str, str]]]:
+    async def scan_inline_js(self, js_content: str, page_url: str, progress_task) -> Tuple[str, List[Tuple[str, str]]]:
         logger.debug(f"Scanning inline JS in {page_url}")
         js_content = self.beautify_js(js_content)
         matches = self.search_patterns(js_content)
-
         confirmed_matches = self.confirm_matches(matches)
+        if confirmed_matches:
+            await self.save_and_display_matches(page_url, matches)
+        progress_task.advance()
+
         return f"Inline script in {page_url}", confirmed_matches
 
     def beautify_js(self, js_content: str) -> str:
@@ -579,20 +587,11 @@ class WebsiteScanner:
                 matches.append((key, snippet))
         return matches
 
-
-    def is_valid_url(self, url: str) -> bool:
-        parsed = urlparse(url)
-        return parsed.scheme in ("http", "https") and parsed.netloc
-
-    def is_same_domain(self, base_url: str, target_url: str) -> bool:
-        return urlparse(base_url).netloc == urlparse(target_url).netloc
-
-    def confirm_matches(self, matches: list) -> List[Tuple[str, str]]:
+    def confirm_matches(self, matches: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        # Instead of fullmatch, we check if the pattern is found anywhere in the snippet
         confirmed = []
         for key, snippet in matches:
-            if key in regex_patterns and regex_patterns[key].fullmatch(snippet):
-                confirmed.append((key, snippet))
-            elif key == "High Entropy String" and len(snippet) >= 32:
+            if key in regex_patterns and regex_patterns[key].search(snippet):
                 confirmed.append((key, snippet))
         return confirmed
 
@@ -601,8 +600,26 @@ class WebsiteScanner:
             return
         embed = {
             "title": f"🔍 New Finding: {key}",
-            "description": f"**Snippet:** `{snippet}`\n**Source:** {source}",
-            "color": 0xFF0000
+            "description": f"**Snippet:** ```{snippet}```\n**Source:** {source}",
+            "color": 0xFF0000,
+            "fields": [
+                {
+                    "name": "Key",
+                    "value": key,
+                    "inline": True
+                },
+                {
+                    "name": "Snippet",
+                    "value": f"```{snippet}```",
+                    "inline": False
+                },
+                {
+                    "name": "Source URL",
+                    "value": source,
+                    "inline": False
+                }
+            ],
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         data = {"embeds": [embed]}
         try:
@@ -614,15 +631,14 @@ class WebsiteScanner:
         except Exception as e:
             logger.error(f"Error sending Discord notification: {e}")
 
-    async def save_and_display_matches(self, website_url: str, js_url: str, matches: list):
+    async def save_and_display_matches(self, source: str, matches: List[Tuple[str, str]]):
         if not matches:
             return
 
         # Save to file
         if self.output_format == "json":
             match_data = {
-                "website": website_url,
-                "js_file": js_url,
+                "source": source,
                 "matches": [{"key": key, "snippet": snippet} for key, snippet in matches]
             }
             with open(self.matches_file_path, "a", encoding="utf-8") as file:
@@ -632,10 +648,10 @@ class WebsiteScanner:
             with open(self.matches_file_path, "a", newline='', encoding="utf-8") as file:
                 writer = csv.writer(file)
                 for key, snippet in matches:
-                    writer.writerow([website_url, js_url, key, snippet])
-        else:  # Default to txt
+                    writer.writerow([source, key, snippet])
+        else:
             with open(self.matches_file_path, "a", encoding="utf-8") as file:
-                file.write(f"\nMatches found at {website_url}, JavaScript source: {js_url}:\n")
+                file.write(f"\nMatches found at {source}:\n")
                 for key, snippet in matches:
                     file.write(f"  [{key}]\n    Snippet: {snippet}\n")
 
@@ -643,23 +659,21 @@ class WebsiteScanner:
         table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
         table.add_column("Key", style="cyan", no_wrap=True)
         table.add_column("Snippet", style="yellow")
-        table.add_column("Source URL", style="green")
+        table.add_column("Source", style="green")
 
         for key, snippet in matches:
-            table.add_row(key, snippet, js_url)
+            table.add_row(key, snippet, source)
             # Send Discord notification
-            asyncio.create_task(self.send_discord_notification(key, snippet, js_url))
+            asyncio.create_task(self.send_discord_notification(key, snippet, source))
 
-        console.print(Panel(table, title=f"🔍 Matches in {js_url}", title_align="left", border_style="green"))
+        console.print(Panel(table, title=f"🔍 Matches in {source}", title_align="left", border_style="green"))
 
-    async def scan_websites(self, websites: list):
+    async def scan_websites(self, websites: List[str]):
         connector = TCPConnector(limit=self.concurrency, ssl=self.ssl_context)
         timeout = ClientTimeout(total=30)
         headers = {"User-Agent": "WebsiteScanner/3.0 (+https://github.com/yourusername/website-scanner)"}
         async with ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
             self.session = session
-            tasks = [self.crawl_and_scan(website, website, 1) for website in websites]
-            total_tasks = len(tasks)
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[bold green]{task.description}"),
@@ -670,15 +684,10 @@ class WebsiteScanner:
                 console=console,
                 transient=True
             ) as progress:
-                scan_task = progress.add_task("Scanning websites...", total=total_tasks)
-                for coro in asyncio.as_completed(tasks):
-                    try:
-                        await coro
-                    except Exception as e:
-                        logger.error(f"Error during scanning: {e}")
-                    finally:
-                        progress.advance(scan_task)
-                progress.update(scan_task, completed=total_tasks)
+                scan_task = progress.add_task("Scanning websites...", total=self.MAX_URLS)
+                tasks = [self.crawl_and_scan(website, website, 1, scan_task) for website in websites]
+                await asyncio.gather(*tasks, return_exceptions=True)
+                progress.update(scan_task, completed=self.url_count)
         logger.info("Scanning completed.")
         self.display_summary()
 
@@ -696,6 +705,13 @@ class WebsiteScanner:
             console.print(f"[bold green]Scan completed successfully. No matches were found.[/bold green]")
         console.print("[bold blue]Press Enter to exit.[/bold blue]")
         input()
+
+    def is_valid_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and parsed.netloc
+
+    def is_same_domain(self, base_url: str, target_url: str) -> bool:
+        return urlparse(base_url).netloc == urlparse(target_url).netloc
 
 def main():
     try:
