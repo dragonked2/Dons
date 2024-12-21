@@ -8,7 +8,7 @@ import aiohttp
 from pathlib import Path
 from typing import List, Tuple, Set, Optional
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlsplit, parse_qs
 from datetime import datetime
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
@@ -17,9 +17,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.status import Status
 from rich.text import Text
-from bs4 import BeautifulSoup  # Import BeautifulSoup
-from aiohttp import ClientSession, ClientTimeout, TCPConnector  # Correct TCPConnector import
-
+from bs4 import BeautifulSoup
+from aiohttp import ClientSession, ClientTimeout, TCPConnector
 
 # Initialize Rich console with markup and emoji support
 console = Console(highlight=True, emoji=True)
@@ -34,7 +33,7 @@ banner = """
   ██    ▄██▀██▄   ▄██ ██    ██  █▄   ██
 ▄████████▀   ▀█████▀▄████  ████▄██████▀
 By Ali Essam
-"""
+"""    
 
 # Display the banner with a typing effect
 console.print(Text(banner, style="bold blue"), end="")
@@ -57,13 +56,14 @@ class ScanResult:
 
 
 class WebsiteScanner:
-    def __init__(self, discord_webhook_url: str, depth: int, concurrency: int, timeout: int):
-        # Configuration directly passed as parameters
+    def __init__(self, discord_webhook_url: str, depth: int, concurrency: int, timeout: int, retry_limit: int = 3):
         self.config = {
             "depth": depth,
             "concurrency": concurrency,
             "timeout": timeout,
+            "retry_limit": retry_limit,
             "user_agent": "Dons JS Scanner/2.0 (Security Research)",
+            "output_dir": str(Path.home() / "Desktop" / "website_scanner_results"),
             "patterns": {
     "Google API Key": re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
     "Artifactory API Token": re.compile(r'(?:\s|=|:|^|"|&)AKC[a-zA-Z0-9]{10,}'),
@@ -75,10 +75,8 @@ class WebsiteScanner:
     "SSH (ssh-ed25519) Public Key": re.compile(r"ssh-ed25519"),
     "Amazon AWS Access Key ID": re.compile(r"AKIA[0-9A-Z]{16}"),
     "Amazon MWS Auth Token": re.compile(r"amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"),
-    "Authorization Bearer Token": re.compile(r"bearer [a-zA-Z0-9_\-\.=]+", re.IGNORECASE),
     "JWT Token": re.compile(r"ey[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_.+/=]*$", re.IGNORECASE),
     "Facebook Access Token": re.compile(r"EAACEdEose0cBA[0-9A-Za-z]+"),
-    "Facebook App ID": re.compile(r"(?i)(facebook|fb)(.{0,20})?['\"][0-9]{13,17}"),
     "Google Cloud Platform API Key": re.compile(r"(?i)\bAIza[0-9A-Za-z\-_]{35}\b"),
     "Google Cloud Platform OAuth Token": re.compile(r"[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com"),
     "Windows Live API Key": re.compile(r"(?i)windowslive.*['|\"][0-9a-f]{22}['|\"]"),
@@ -88,7 +86,6 @@ class WebsiteScanner:
     "Litecoin Private Key (WIF)": re.compile(r"[LK][1-9A-HJ-NP-Za-km-z]{50}$"),
     "Bitcoin Cash Private Key (WIF)": re.compile(r"[Kk][1-9A-HJ-NP-Za-km-z]{50,51}$"),
     "Cardano Extended Private Key": re.compile(r"xprv[a-zA-Z0-9]{182}$"),
-    "Monero Private Spend Key": re.compile(r"4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}"),
     "Monero Private View Key": re.compile(r"9[1-9A-HJ-NP-Za-km-z]{94}"),
     "Zcash Private Key": re.compile(r"sk[a-zA-Z0-9]{95}$"),
     "Tezos Secret Key": re.compile(r"edsk[a-zA-Z0-9]{54}$"),
@@ -158,7 +155,6 @@ class WebsiteScanner:
     "Instagram Access Token": re.compile(r"(?i)instagram(.{0,20})?['\"][0-9a-zA-Z\-_]{7}['\"]"),
     "Docker Registry Token": re.compile(r"(?i)docker[^\s]*?['|\"]\w{32,64}['|\"]"),
     "GitLab Personal Access Token": re.compile(r"(?i)gitlab.*['|\"]\w{20,40}['|\"]"),
-    "JIRA API Token": re.compile(r"(?i)jira.*['|\"]\w{16}['|\"]"),
     "Azure Key Vault Secret Identifier": re.compile(r"https:\/\/[a-z0-9\-]+\.vault\.azure\.net\/secrets\/[a-zA-Z0-9\-]+\/[a-zA-Z0-9\-]+"),
     "Trello API Key": re.compile(r"(?i)trello.*['|\"]\w{32}['|\"]"),
     "Atlassian API Key": re.compile(r"(?i)atlassian.*['|\"]\w{32}['|\"]"),
@@ -342,10 +338,11 @@ class WebsiteScanner:
 }
         }
         self.discord_webhook_url = discord_webhook_url
-        self.results: Set[ScanResult] = set()
+        self.results: Set[ScanResult] = set()  # Use a set to avoid duplicates
         self.visited_urls: Set[str] = set()
         self.session: Optional[ClientSession] = None
         self.sem: Optional[asyncio.Semaphore] = None
+        self.urls_with_params: Set[str] = set()  # Store unique URLs with parameters
         self.setup_logging()
 
     def setup_logging(self):
@@ -380,12 +377,19 @@ class WebsiteScanner:
                         encoding = response.charset or 'utf-8'
                         return data.decode(encoding, errors='replace')
 
-                    # Suppress 401, 502, 503, and SSL errors
+                    # Handle common HTTP errors gracefully
                     if response.status in [401, 502, 503, 404, 400, 500, 204]:
                         return None
 
                     self.logger.warning(f"Status {response.status} for {url}")
                     return None
+
+            except asyncio.TimeoutError:
+                self.logger.error(f"Timeout occurred while fetching {url}. Retrying...")
+                if retry_count < self.config["retry_limit"]:
+                    await asyncio.sleep(2 * (retry_count + 1))  # Exponential backoff
+                    return await self.fetch(url, retry_count + 1)
+                return None
 
             except Exception as e:
                 self.logger.error(f"Error fetching {url}: {str(e)}")
@@ -402,10 +406,9 @@ class WebsiteScanner:
             for i, line in enumerate(lines):
                 for match in pattern.finditer(line):
                     snippet = match.group(0).strip()
-                    column_number = line.find(snippet) + 1  # Position of the match in the line
+                    column_number = line.find(snippet) + 1
                     matches.append(ScanMatch(key, snippet, f"{context} (Line {i + 1}, Column {column_number})"))
 
-                    # Send the match immediately to Discord with detailed location
                     location_info = f"Found '{key}' pattern in {context}:\n`{snippet}` (Line {i + 1}, Column {column_number})"
                     await self.send_discord_notification(location_info)
         return matches
@@ -415,21 +418,20 @@ class WebsiteScanner:
         if not content:
             return []
 
-        # Handle base64-encoded JS content
+        # Check if the content is Base64-encoded JavaScript
         if content.startswith("data:application/x-javascript;base64,"):
             try:
-                # Attempt to decode Base64-encoded JavaScript content
-                content = base64.b64decode(content.split(",")[1]).decode("utf-8", errors='replace')
+                encoded_data = content.split(",", 1)[1]
+                content = base64.b64decode(encoded_data).decode("utf-8", errors='replace')
             except Exception as e:
+                # Log the error and skip this particular URL if decoding fails
                 self.logger.error(f"Base64 decode error for {js_url}: {e}")
-                return []
+                return []  # Return empty list to skip the faulty JavaScript content
 
+        # Continue to scan the JavaScript content
         return await self.scan_js_content(content, f"External JS: {js_url}")
 
     def parse_html_or_xml(self, content: str) -> BeautifulSoup:
-        """
-        Determines if the content is HTML or XML, and parses accordingly.
-        """
         try:
             if content.strip().startswith("<?xml"):
                 return BeautifulSoup(content, "xml")
@@ -452,14 +454,12 @@ class WebsiteScanner:
 
         soup = self.parse_html_or_xml(content)
 
-        # Process external JS files
         js_urls = [urljoin(url, script["src"]) for script in soup.find_all("script", src=True)]
         for js_url in js_urls:
             matches = await self.process_js_file(js_url)
             if matches:
-                self.results.add(ScanResult(url, js_url, tuple(matches)))  # Convert list to tuple
+                self.results.add(ScanResult(url, js_url, tuple(matches)))  # Convert list to tuple to ensure uniqueness
 
-        # Process inline scripts
         for idx, script in enumerate(soup.find_all("script", src=False)):
             matches = await self.scan_js_content(
                 script.get_text(),
@@ -467,9 +467,11 @@ class WebsiteScanner:
                 is_inline=True
             )
             if matches:
-                self.results.add(ScanResult(url, f"{url}#inline-{idx}", tuple(matches)))  # Convert list to tuple
+                self.results.add(ScanResult(url, f"{url}#inline-{idx}", tuple(matches)))  # Convert list to tuple to ensure uniqueness
 
-        # Queue next URLs
+        # Extract URLs with parameters and save them
+        self.extract_and_save_urls_with_params(soup)
+
         if depth < self.config["depth"]:
             next_urls = [
                 urljoin(url, a["href"]) 
@@ -488,6 +490,19 @@ class WebsiteScanner:
             return bool(parsed.netloc) and parsed.scheme in {"http", "https"}
         except Exception:
             return False
+
+    def extract_and_save_urls_with_params(self, soup: BeautifulSoup):
+        for anchor in soup.find_all("a", href=True):
+            url = urljoin(anchor["href"], anchor["href"])
+            if '?' in url:
+                self.urls_with_params.add(url)
+
+        # Save unique URLs with parameters to a text file
+        if self.urls_with_params:
+            output_file = Path(self.config["output_dir"]) / "urls_with_parameters.txt"
+            with open(output_file, "w", encoding="utf-8") as f:
+                for url in self.urls_with_params:
+                    f.write(url + "\n")
 
     async def scan_websites(self, websites: List[str]):
         self.sem = asyncio.Semaphore(self.config["concurrency"])
@@ -515,13 +530,13 @@ class WebsiteScanner:
                     progress.advance(main_task_id)
 
     def save_results(self, output_format: str = "both"):
+        # Create directory if not exists and handle results
         output_dir = Path(self.config["output_dir"])
         output_dir.mkdir(parents=True, exist_ok=True)
         current_dir = Path(os.getcwd())  # Get the current directory where the script is running
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Save results to both the specified directory and the current working directory
         if output_format in ("json", "both"):
             json_file = output_dir / f"scan_results_{timestamp}.json"
             json_data = [
@@ -544,7 +559,6 @@ class WebsiteScanner:
             with open(json_file, "w", encoding="utf-8") as f:
                 json.dump(json_data, f, indent=2)
 
-            # Save a copy to the current working directory
             current_json_file = current_dir / f"scan_results_{timestamp}.json"
             with open(current_json_file, "w", encoding="utf-8") as f:
                 json.dump(json_data, f, indent=2)
@@ -562,7 +576,6 @@ class WebsiteScanner:
                         f.write(f"    Context: {match.context}\n")
                     f.write("-" * 80 + "\n")
 
-            # Save a copy to the current working directory
             current_txt_file = current_dir / f"scan_results_{timestamp}.txt"
             with open(current_txt_file, "w", encoding="utf-8") as f:
                 for result in self.results:
@@ -577,6 +590,8 @@ class WebsiteScanner:
 
         return output_dir
 
+
+# Input and user interaction
 def validate_url(url: str) -> bool:
     try:
         result = urlparse(url)
