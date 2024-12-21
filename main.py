@@ -57,6 +57,7 @@ class ScanResult:
 
 class WebsiteScanner:
     def __init__(self, discord_webhook_url: str, depth: int, concurrency: int, timeout: int, retry_limit: int = 3):
+        # Set default config values and automatically create output directory path
         self.config = {
             "depth": depth,
             "concurrency": concurrency,
@@ -86,7 +87,6 @@ class WebsiteScanner:
     "Litecoin Private Key (WIF)": re.compile(r"[LK][1-9A-HJ-NP-Za-km-z]{50}$"),
     "Bitcoin Cash Private Key (WIF)": re.compile(r"[Kk][1-9A-HJ-NP-Za-km-z]{50,51}$"),
     "Cardano Extended Private Key": re.compile(r"xprv[a-zA-Z0-9]{182}$"),
-    "Monero Private View Key": re.compile(r"9[1-9A-HJ-NP-Za-km-z]{94}"),
     "Zcash Private Key": re.compile(r"sk[a-zA-Z0-9]{95}$"),
     "Tezos Secret Key": re.compile(r"edsk[a-zA-Z0-9]{54}$"),
     "EOS Private Key": re.compile(r"5[a-zA-Z0-9]{50}$"),
@@ -385,10 +385,11 @@ class WebsiteScanner:
                     return None
 
             except asyncio.TimeoutError:
-                self.logger.error(f"Timeout occurred while fetching {url}. Retrying...")
                 if retry_count < self.config["retry_limit"]:
+                    self.logger.warning(f"Timeout occurred while fetching {url}. Retrying...")
                     await asyncio.sleep(2 * (retry_count + 1))  # Exponential backoff
                     return await self.fetch(url, retry_count + 1)
+                self.logger.error(f"Failed to fetch {url} after multiple retries")
                 return None
 
             except Exception as e:
