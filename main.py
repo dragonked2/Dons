@@ -4,44 +4,47 @@ import asyncio
 import logging
 import base64
 import json
-import csv
-from pathlib import Path
-from urllib.parse import urljoin, urlparse
-from datetime import datetime, timezone
-
 import aiohttp
+from pathlib import Path
+from typing import List, Tuple, Set, Optional
+from dataclasses import dataclass
+from urllib.parse import urljoin, urlparse
+from datetime import datetime
+
 from aiohttp import ClientSession, ClientTimeout, TCPConnector
-from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
-import jsbeautifier
+from bs4 import BeautifulSoup
 from rich.console import Console
-from rich.prompt import Prompt
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
-from rich.table import Table
+from rich.prompt import Prompt, Confirm
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 from rich.panel import Panel
-from rich import box
-import ssl
-import warnings
-from typing import List, Tuple
+from rich.table import Table
+from rich.status import Status
 
-from logging.handlers import RotatingFileHandler
+# Initialize Rich console with markup and emoji support
+console = Console(highlight=True, emoji=True)
 
-# Suppress specific BeautifulSoup warnings
-warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+@dataclass(frozen=True)
+class ScanMatch:
+    key: str
+    snippet: str
+    context: str
 
-# Initialize Rich console
-console = Console(style="green", width=120, height=30)
+@dataclass(frozen=True)
+class ScanResult:
+    website_url: str
+    js_url: str
+    matches: Tuple[ScanMatch, ...]  # Change list to tuple for hashability
+    timestamp: datetime = datetime.now()
 
-# Configure logging with rotating file handler
-logger = logging.getLogger("WebsiteScanner")
-logger.setLevel(logging.INFO)
-handler = RotatingFileHandler("website_scanner.log", maxBytes=5 * 1024 * 1024, backupCount=2)
-formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-# Precompile regex patterns for performance
-regex_patterns = {
-    # Existing and new patterns (flattened)
+class ConfigManager:
+    DEFAULT_CONFIG = {
+        "depth": 4,
+        "concurrency": 50,
+        "timeout": 30,
+        "retry_limit": 3,
+        "user_agent": "WebsiteScanner/2.0 (Security Research)",
+        "output_dir": str(Path.home() / "Desktop" / "website_scanner_results"),
+        "patterns": {
     "Google API Key": re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
     "Artifactory API Token": re.compile(r'(?:\s|=|:|^|"|&)AKC[a-zA-Z0-9]{10,}'),
     "Cloudinary API Key": re.compile(r"cloudinary://[0-9]{15}:[0-9A-Za-z]+@[a-z]+"),
@@ -316,420 +319,380 @@ regex_patterns = {
     "Google Cloud Firebase Remote Config API Key": re.compile(r"(?i)google.*firebase.*remote.*config.*api.*key\s*=\s*['|\"]\w{39}['|\"]"),
     "Google Cloud Firebase In-App Messaging API Key": re.compile(r"(?i)google.*firebase.*in.*app.*messaging.*api.*key\s*=\s*['|\"]\w{39}['|\"]"),
     "Google Cloud Firebase Dynamic Links API Key": re.compile(r"(?i)google.*firebase.*dynamic.*links.*api.*key\s*=\s*['|\"]\w{39}['|\"]"),
-}
+    "Interesting Endpoint": re.compile(r"/(admin|config|dashboard|auth|api|login|wp-login|wp-admin)/", re.IGNORECASE),
+        }
+    }
+
+    def __init__(self, config_path: Optional[Path] = None):
+        self.config_path = config_path or Path("config.json")
+        self.config = self.load_config()
+        self.patterns = {k: re.compile(v) for k, v in self.config["patterns"].items()}
+
+    def load_config(self) -> dict:
+        try:
+            if self.config_path.exists():
+                with open(self.config_path, 'r') as f:
+                    return {**self.DEFAULT_CONFIG, **json.load(f)}
+            return self.DEFAULT_CONFIG
+        except Exception as e:
+            console.print(f"[yellow]Warning: Using default configuration due to error: {e}[/yellow]")
+            return self.DEFAULT_CONFIG
 
 class WebsiteScanner:
-    DEFAULT_DEPTH = 4
-    DEFAULT_CONCURRENCY = 50
-    RETRY_LIMIT = 3
-    MAX_URLS = 1000  # Maximum number of URLs to scan to prevent infinite loops
+    def __init__(self, config_manager: ConfigManager, discord_webhook_url: str):
+        self.config = config_manager
+        self.results: Set[ScanResult] = set()
+        self.visited_urls: Set[str] = set()
+        self.discord_webhook_url = discord_webhook_url
+        self.session: Optional[ClientSession] = None
+        self.sem: Optional[asyncio.Semaphore] = None
+        self.setup_logging()
 
-    def __init__(self, depth: int = None, concurrency: int = None, output_format: str = "txt", discord_webhook: str = None):
-        self.depth = depth or self.DEFAULT_DEPTH
-        self.concurrency = concurrency or self.DEFAULT_CONCURRENCY
-        self.output_format = output_format.lower()
-        self.discord_webhook = discord_webhook
-        self.matches_file_path = Path.home() / "Desktop" / f"matches.{self.output_format}"
-        self.sem = asyncio.Semaphore(self.concurrency)
-        self.session = None
-        self.results = set()
-        self.visited_urls = set()
-        self.js_files_scanned = set()
-        self.url_count = 0  # To track the number of URLs scanned
-        self.ssl_context = ssl.create_default_context()
-        self.ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')  # Lower security level for compatibility; adjust as needed
-        logger.info(f"Initialized WebsiteScanner with depth={self.depth}, concurrency={self.concurrency}, output_format={self.output_format}")
-
-    @staticmethod
-    def get_user_input() -> Tuple[List[str], int, int, str, str]:
-        header = r"""
-    ######################################################################
-    #    ____                      _____                                 #
-    #   / __ \____  ____  _____   / ___/_________ _____  ____  ___  _____#
-    #  / / / / __ \/ __ \/ ___/   \__ \/ ___/ __ `/ __ \/ __ \/ _ \/ ___/#
-    # / /_/ / /_/ / / / (__  )   ___/ / /__/ /_/ / / / / / / /  __/ /    #
-    #/_____/\____/_/ /_/____/   /____/\___/\__,_/_/ /_/_/ /_/\___/_/     #
-    ######################################################################
-                                                           #By Ali Essam
-
-
-        """
-        console.print(Panel(header, style="bold green", border_style="cyan"))
-        console.print(Panel("[bold red]Please use this tool responsibly and ensure you have permission to scan the target websites.[/bold red]", border_style="yellow"))
-
-        # Prompt for Discord webhook URL
-        while True:
-            discord_webhook = Prompt.ask("Enter your Discord Webhook URL (or leave blank to skip)", default="", show_default=False).strip()
-            if discord_webhook and not discord_webhook.startswith("https://discord.com/api/webhooks/"):
-                console.print("[bold red]Invalid Discord Webhook URL. Please enter a valid URL or leave blank to skip.[/bold red]")
-            else:
-                break
-
-        # Choose scan type
-        scan_type = Prompt.ask("Scan multiple websites from a file or a single website?", choices=["file", "single"], default="single")
-        websites = []
-
-        if scan_type == "file":
-            while True:
-                file_path = Prompt.ask("Enter the path to the file containing website URLs")
-                if Path(file_path).is_file():
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        websites = [line.strip() for line in f if line.strip()]
-                    if not websites:
-                        console.print("[bold red]The file is empty. Please provide a file with valid URLs.[/bold red]")
-                        continue
-                    break
-                else:
-                    console.print("[bold red]File not found. Please enter a valid file path.[/bold red]")
-        else:
-            while True:
-                website = Prompt.ask("Enter the website URL (type 'done' to finish)", default="", show_default=False).strip()
-                if website.lower() == 'done':
-                    break
-                if website.startswith(("http://", "https://")) and urlparse(website).netloc:
-                    websites.append(website)
-                else:
-                    console.print("[bold red]Invalid URL. Please include http:// or https:// and ensure it's properly formatted.[/bold red]")
-            if not websites:
-                console.print("[bold red]No websites entered. Exiting.[/bold red]")
-                exit()
-
-        # Input validation for depth
-        while True:
-            depth_input = Prompt.ask(
-                f"Enter the recursive depth for scanning (default is {WebsiteScanner.DEFAULT_DEPTH})",
-                default=str(WebsiteScanner.DEFAULT_DEPTH)
-            )
-            try:
-                depth = int(depth_input)
-                if depth < 1:
-                    console.print("[bold red]Depth must be at least 1.[/bold red]")
-                    continue
-                break
-            except ValueError:
-                console.print("[bold red]Please enter a valid integer for depth.[/bold red]")
-
-        # Input validation for concurrency
-        while True:
-            concurrency_input = Prompt.ask(
-                f"Enter the number of concurrent connections (default is {WebsiteScanner.DEFAULT_CONCURRENCY})",
-                default=str(WebsiteScanner.DEFAULT_CONCURRENCY)
-            )
-            try:
-                concurrency = int(concurrency_input)
-                if concurrency < 10 or concurrency > 1000:
-                    console.print("[bold red]Concurrency must be between 10 and 1000.[/bold red]")
-                    continue
-                break
-            except ValueError:
-                console.print("[bold red]Please enter a valid integer for concurrency.[/bold red]")
-
-        # Choose output format
-        output_format = Prompt.ask(
-            "Choose output format",
-            choices=["txt", "json", "csv"],
-            default="txt"
+    def setup_logging(self):
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+        log_file = log_dir / f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler()
+            ]
         )
+        self.logger = logging.getLogger(__name__)
 
-        return websites, depth, concurrency, output_format, discord_webhook
+    async def send_discord_notification(self, message: str):
+        try:
+            async with aiohttp.ClientSession() as session:
+                payload = {"content": message}
+                await session.post(self.discord_webhook_url, json=payload)
+        except Exception as e:
+            self.logger.error(f"Error sending Discord notification: {e}")
 
-    async def fetch(self, url: str, retry_count: int = 0) -> Tuple[str, str]:
+    async def fetch(self, url: str, retry_count: int = 0) -> Optional[str]:
         async with self.sem:
             try:
-                async with self.session.get(url, ssl=self.ssl_context) as response:
+                async with self.session.get(url, ssl=False) as response:
                     if response.status == 200:
                         data = await response.read()
                         encoding = response.charset or 'utf-8'
-                        text = data.decode(encoding, errors='replace')
-                        content_type = response.headers.get('Content-Type', '').lower()
-                        return text, content_type
-                    else:
-                        logger.warning(f"Non-200 status code {response.status} for URL: {url}")
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout error fetching URL {url}")
+                        return data.decode(encoding, errors='replace')
+
+                    # Suppress 401, 502, 503, and SSL errors
+                    if response.status in [401, 502, 503, 404, 400, 500, 204]:
+                        return None
+
+                    self.logger.warning(f"Status {response.status} for {url}")
+                    return None
+
             except Exception as e:
-                logger.error(f"Error fetching URL {url}: {e}")
+                self.logger.error(f"Error fetching {url}: {str(e)}")
+                if retry_count < self.config.config["retry_limit"]:
+                    await asyncio.sleep(2 * (retry_count + 1))  # Exponential backoff
+                    return await self.fetch(url, retry_count + 1)
+                return None
 
-            if retry_count < self.RETRY_LIMIT:
-                logger.info(f"Retrying ({retry_count + 1}/{self.RETRY_LIMIT}) for URL: {url}")
-                return await self.fetch(url, retry_count + 1)
+    async def scan_js_content(self, content: str, context: str) -> List[ScanMatch]:
+        matches = []
+        for key, pattern in self.config.patterns.items():
+            for match in pattern.finditer(content):
+                snippet = match.group(0).strip()
+                matches.append(ScanMatch(key, snippet, context))
+                # Send the match immediately to Discord
+                await self.send_discord_notification(f"Found '{key}' pattern in {context}:\n`{snippet}`")
+        return matches
+
+    async def process_js_file(self, js_url: str) -> List[ScanMatch]:
+        content = await self.fetch(js_url)
+        if not content:
+            return []
+
+        # Handle base64-encoded JS content
+        if content.startswith("data:application/x-javascript;base64,"):
+            try:
+                # Attempt to decode Base64-encoded JavaScript content
+                content = base64.b64decode(content.split(",")[1]).decode("utf-8", errors='replace')
+            except Exception as e:
+                self.logger.error(f"Base64 decode error for {js_url}: {e}")
+                return []
+
+        return await self.scan_js_content(content, f"External JS: {js_url}")
+
+    def parse_html_or_xml(self, content: str) -> BeautifulSoup:
+        """
+        Determines if the content is HTML or XML, and parses accordingly.
+        """
+        try:
+            if content.strip().startswith("<?xml"):
+                return BeautifulSoup(content, "xml")
             else:
-                logger.error(f"Failed to fetch URL after {self.RETRY_LIMIT} retries: {url}")
-                return "", ""
+                return BeautifulSoup(content, "lxml")
+        except Exception as e:
+            self.logger.error(f"Error parsing content: {e}")
+            return BeautifulSoup(content, "html.parser")
 
-    async def crawl_and_scan(self, url: str, base_url: str, current_depth: int, progress_task):
-        if current_depth > self.depth:
-            return
-        parsed_base = urlparse(base_url)
-        parsed_url = urlparse(url)
-        if parsed_base.netloc != parsed_url.netloc:
-            return
-        if url in self.visited_urls:
-            return
-        if self.url_count >= self.MAX_URLS:
-            logger.info(f"Reached maximum URL limit of {self.MAX_URLS}. Stopping scan.")
+    async def crawl_page(self, url: str, base_url: str, depth: int, progress: Progress, task_id: int):
+        if depth > self.config.config["depth"] or url in self.visited_urls:
             return
 
         self.visited_urls.add(url)
-        self.url_count += 1
-        logger.debug(f"Crawling URL: {url} at depth {current_depth}")
+        progress.update(task_id, description=f"Scanning: {url}", completed=progress.tasks[task_id].completed + 1)
 
-        html_content, content_type = await self.fetch(url)
-        if not html_content:
+        content = await self.fetch(url)
+        if not content:
             return
 
-        parser = 'xml' if 'xml' in content_type else 'lxml'
+        soup = self.parse_html_or_xml(content)
 
+        # Process external JS files
+        js_urls = [urljoin(url, script["src"]) for script in soup.find_all("script", src=True)]
+        for js_url in js_urls:
+            matches = await self.process_js_file(js_url)
+            if matches:
+                self.results.add(ScanResult(url, js_url, tuple(matches)))  # Convert list to tuple
+
+        # Process inline scripts
+        for idx, script in enumerate(soup.find_all("script", src=False)):
+            matches = await self.scan_js_content(
+                script.get_text(),
+                f"Inline Script #{idx + 1}"
+            )
+            if matches:
+                self.results.add(ScanResult(url, f"{url}#inline-{idx}", tuple(matches)))  # Convert list to tuple
+
+        # Queue next URLs
+        if depth < self.config.config["depth"]:
+            next_urls = [
+                urljoin(url, a["href"]) 
+                for a in soup.find_all("a", href=True)
+                if self.is_valid_url(urljoin(url, a["href"]))
+                and urlparse(base_url).netloc == urlparse(urljoin(url, a["href"])).netloc
+            ]
+            
+            tasks = [self.crawl_page(next_url, base_url, depth + 1, progress, task_id) 
+                    for next_url in next_urls]
+            await asyncio.gather(*tasks)
+
+    def is_valid_url(self, url: str) -> bool:
         try:
-            soup = BeautifulSoup(html_content, parser)
-        except Exception as e:
-            logger.error(f"Error parsing {url} with parser {parser}: {e}")
-            return
-
-        # Extract and process external JS files
-        js_urls = [urljoin(url, script.get("src")) for script in soup.find_all("script", src=True)]
-        js_urls = [js_url for js_url in js_urls if self.is_valid_url(js_url)]
-        tasks = [self.scan_js_file(js_url, progress_task) for js_url in js_urls if js_url not in self.js_files_scanned]
-
-        # Extract and scan inline scripts
-        inline_scripts = [script.string for script in soup.find_all("script") if not script.get("src") and script.string]
-        tasks.extend([self.scan_inline_js(script_content, url, progress_task) for script_content in inline_scripts])
-
-        # Extract and scan JavaScript from event handlers
-        event_handlers = ['onclick', 'onload', 'onerror', 'onmouseover', 'onmouseout', 'onkeyup', 'onkeydown']
-        inline_js_from_events = []
-        for handler in event_handlers:
-            elements = soup.find_all(attrs={handler: True})
-            for elem in elements:
-                js_code = elem.get(handler)
-                if js_code:
-                    inline_js_from_events.append(js_code)
-        tasks.extend([self.scan_inline_js(js_code, url, progress_task) for js_code in inline_js_from_events])
-
-        # Process JS scanning tasks in chunks
-        chunk_size = 100  # Adjust based on performance needs
-        for i in range(0, len(tasks), chunk_size):
-            chunk = tasks[i:i + chunk_size]
-            try:
-                js_results = await asyncio.gather(*chunk, return_exceptions=True)
-            except Exception as e:
-                logger.error(f"Error during JS scanning tasks: {e}")
-                continue
-
-            for result in js_results:
-                if isinstance(result, Exception):
-                    logger.error(f"Error during JS scanning: {result}")
-                    continue
-                # Result is already processed in scan_js_file and scan_inline_js
-                progress_task.update(total=self.url_count)  # Update total dynamically
-
-        # Extract and enqueue next URLs
-        next_urls = [urljoin(url, link.get("href")) for link in soup.find_all("a", href=True)]
-        next_urls = [u for u in next_urls if self.is_valid_url(u) and self.is_same_domain(base_url, u)]
-        allowed_extensions = ['', '.html', '.htm', '.php', '.asp', '.aspx', '.jsp']
-        next_urls = [u for u in next_urls if os.path.splitext(urlparse(u).path)[1].lower() in allowed_extensions]
-
-        # Recursively crawl next URLs
-        tasks = [self.crawl_and_scan(u, base_url, current_depth + 1, progress_task) for u in next_urls]
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-    async def scan_js_file(self, js_url: str, progress_task) -> Tuple[str, List[Tuple[str, str]]]:
-        logger.debug(f"Scanning JS file: {js_url}")
-        js_content, _ = await self.fetch(js_url)
-        if not js_content:
-            return js_url, []
-
-        self.js_files_scanned.add(js_url)
-        js_content = self.beautify_js(js_content)
-
-        # Decode base64 encoded JS if applicable
-        if js_content.startswith("data:application/x-javascript;base64,"):
-            try:
-                js_content = base64.b64decode(js_content.split(",")[1]).decode("utf-8", errors='replace')
-            except Exception as e:
-                logger.error(f"Failed to decode base64 JS content from {js_url}: {e}")
-                return js_url, []
-
-        matches = self.search_patterns(js_content)
-        confirmed_matches = self.confirm_matches(matches)
-        if confirmed_matches:
-            await self.save_and_display_matches(js_url, matches)
-        progress_task.advance()
-
-        return js_url, confirmed_matches
-
-    async def scan_inline_js(self, js_content: str, page_url: str, progress_task) -> Tuple[str, List[Tuple[str, str]]]:
-        logger.debug(f"Scanning inline JS in {page_url}")
-        js_content = self.beautify_js(js_content)
-        matches = self.search_patterns(js_content)
-        confirmed_matches = self.confirm_matches(matches)
-        if confirmed_matches:
-            await self.save_and_display_matches(page_url, matches)
-        progress_task.advance()
-
-        return f"Inline script in {page_url}", confirmed_matches
-
-    def beautify_js(self, js_content: str) -> str:
-        try:
-            opts = jsbeautifier.default_options()
-            opts.indent_size = 2
-            beautified_js = jsbeautifier.beautify(js_content, opts)
-            return beautified_js
-        except Exception as e:
-            logger.warning(f"Failed to beautify JS content: {e}")
-            return js_content
-
-    def search_patterns(self, js_content: str) -> List[Tuple[str, str]]:
-        matches = []
-        for key, pattern in regex_patterns.items():
-            for match in pattern.finditer(js_content):
-                snippet = match.group(0).strip()
-                matches.append((key, snippet))
-        return matches
-
-    def confirm_matches(self, matches: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
-        # Instead of fullmatch, we check if the pattern is found anywhere in the snippet
-        confirmed = []
-        for key, snippet in matches:
-            if key in regex_patterns and regex_patterns[key].search(snippet):
-                confirmed.append((key, snippet))
-        return confirmed
-
-    async def send_discord_notification(self, key: str, snippet: str, source: str):
-        if not self.discord_webhook:
-            return
-        embed = {
-            "title": f"🔍 New Finding: {key}",
-            "description": f"**Snippet:** ```{snippet}```\n**Source:** {source}",
-            "color": 0xFF0000,
-            "fields": [
-                {
-                    "name": "Key",
-                    "value": key,
-                    "inline": True
-                },
-                {
-                    "name": "Snippet",
-                    "value": f"```{snippet}```",
-                    "inline": False
-                },
-                {
-                    "name": "Source URL",
-                    "value": source,
-                    "inline": False
-                }
-            ],
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        data = {"embeds": [embed]}
-        try:
-            async with self.session.post(self.discord_webhook, json=data) as response:
-                if response.status in [200, 204]:
-                    logger.info(f"Successfully sent Discord notification for {key}")
-                else:
-                    logger.error(f"Failed to send Discord notification for {key}: HTTP {response.status}")
-        except Exception as e:
-            logger.error(f"Error sending Discord notification: {e}")
-
-    async def save_and_display_matches(self, source: str, matches: List[Tuple[str, str]]):
-        if not matches:
-            return
-
-        # Save to file
-        if self.output_format == "json":
-            match_data = {
-                "source": source,
-                "matches": [{"key": key, "snippet": snippet} for key, snippet in matches]
-            }
-            with open(self.matches_file_path, "a", encoding="utf-8") as file:
-                json.dump(match_data, file, indent=2)
-                file.write(",\n")
-        elif self.output_format == "csv":
-            with open(self.matches_file_path, "a", newline='', encoding="utf-8") as file:
-                writer = csv.writer(file)
-                for key, snippet in matches:
-                    writer.writerow([source, key, snippet])
-        else:
-            with open(self.matches_file_path, "a", encoding="utf-8") as file:
-                file.write(f"\nMatches found at {source}:\n")
-                for key, snippet in matches:
-                    file.write(f"  [{key}]\n    Snippet: {snippet}\n")
-
-        # Display in console using Rich with detailed formatting
-        table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
-        table.add_column("Key", style="cyan", no_wrap=True)
-        table.add_column("Snippet", style="yellow")
-        table.add_column("Source", style="green")
-
-        for key, snippet in matches:
-            table.add_row(key, snippet, source)
-            # Send Discord notification
-            asyncio.create_task(self.send_discord_notification(key, snippet, source))
-
-        console.print(Panel(table, title=f"🔍 Matches in {source}", title_align="left", border_style="green"))
+            parsed = urlparse(url)
+            return bool(parsed.netloc) and parsed.scheme in {"http", "https"}
+        except Exception:
+            return False
 
     async def scan_websites(self, websites: List[str]):
-        connector = TCPConnector(limit=self.concurrency, ssl=self.ssl_context)
-        timeout = ClientTimeout(total=30)
-        headers = {"User-Agent": "WebsiteScanner/3.0 (+https://github.com/yourusername/website-scanner)"}
+        self.sem = asyncio.Semaphore(self.config.config["concurrency"])
+        connector = TCPConnector(limit=self.config.config["concurrency"], ssl=False)
+        timeout = ClientTimeout(total=self.config.config["timeout"])
+        
+        headers = {"User-Agent": self.config.config["user_agent"]}
+        
         async with ClientSession(connector=connector, timeout=timeout, headers=headers) as session:
             self.session = session
+            
             with Progress(
                 SpinnerColumn(),
-                TextColumn("[bold green]{task.description}"),
+                TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
-                TextColumn("{task.percentage:>3.0f}%"),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
                 TimeElapsedColumn(),
-                TimeRemainingColumn(),
                 console=console,
                 transient=True
             ) as progress:
-                scan_task = progress.add_task("Scanning websites...", total=self.MAX_URLS)
-                tasks = [self.crawl_and_scan(website, website, 1, scan_task) for website in websites]
-                await asyncio.gather(*tasks, return_exceptions=True)
-                progress.update(scan_task, completed=self.url_count)
-        logger.info("Scanning completed.")
-        self.display_summary()
+                main_task_id = progress.add_task("Scanning websites...", total=len(websites))
+                
+                for website in websites:
+                    await self.crawl_page(website, website, 1, progress, main_task_id)
+                    progress.advance(main_task_id)
 
-    def display_summary(self):
-        total_matches = len(self.results)
-        if total_matches:
-            summary_table = Table(title="Scan Summary", box=box.ROUNDED, header_style="bold magenta")
-            summary_table.add_column("Total Matches", justify="right", style="bold red")
-            summary_table.add_column("Output File", style="green")
-            summary_table.add_row(str(total_matches), str(self.matches_file_path))
-            console.print(Panel(summary_table, title="Summary", border_style="blue"))
-            console.print(f"[bold green]Scan completed successfully. Results saved to {self.matches_file_path}[/bold green]")
-        else:
-            console.print(Panel("[bold green]No matches found.[/bold green]", title="Summary", border_style="blue"))
-            console.print(f"[bold green]Scan completed successfully. No matches were found.[/bold green]")
-        console.print("[bold blue]Press Enter to exit.[/bold blue]")
-        input()
+    def save_results(self, output_format: str = "both"):
+        output_dir = Path(self.config.config["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        current_dir = Path(os.getcwd())  # Get the current directory where the script is running
 
-    def is_valid_url(self, url: str) -> bool:
-        parsed = urlparse(url)
-        return parsed.scheme in ("http", "https") and parsed.netloc
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Save results to both the specified directory and the current working directory
+        if output_format in ("json", "both"):
+            json_file = output_dir / f"scan_results_{timestamp}.json"
+            json_data = [
+                {
+                    "website_url": result.website_url,
+                    "js_url": result.js_url,
+                    "matches": [
+                        {
+                            "key": match.key,
+                            "snippet": match.snippet,
+                            "context": match.context
+                        }
+                        for match in result.matches
+                    ],
+                    "timestamp": result.timestamp.isoformat()
+                }
+                for result in self.results
+            ]
+            
+            with open(json_file, "w", encoding="utf-8") as f:
+                json.dump(json_data, f, indent=2)
 
-    def is_same_domain(self, base_url: str, target_url: str) -> bool:
-        return urlparse(base_url).netloc == urlparse(target_url).netloc
+            # Save a copy to the current working directory
+            current_json_file = current_dir / f"scan_results_{timestamp}.json"
+            with open(current_json_file, "w", encoding="utf-8") as f:
+                json.dump(json_data, f, indent=2)
 
-def main():
+        if output_format in ("txt", "both"):
+            txt_file = output_dir / f"scan_results_{timestamp}.txt"
+            with open(txt_file, "w", encoding="utf-8") as f:
+                for result in self.results:
+                    f.write(f"\nWebsite: {result.website_url}\n")
+                    f.write(f"JavaScript Source: {result.js_url}\n")
+                    f.write("Matches:\n")
+                    for match in result.matches:
+                        f.write(f"  - Type: {match.key}\n")
+                        f.write(f"    Snippet: {match.snippet}\n")
+                        f.write(f"    Context: {match.context}\n")
+                    f.write("-" * 80 + "\n")
+
+            # Save a copy to the current working directory
+            current_txt_file = current_dir / f"scan_results_{timestamp}.txt"
+            with open(current_txt_file, "w", encoding="utf-8") as f:
+                for result in self.results:
+                    f.write(f"\nWebsite: {result.website_url}\n")
+                    f.write(f"JavaScript Source: {result.js_url}\n")
+                    f.write("Matches:\n")
+                    for match in result.matches:
+                        f.write(f"  - Type: {match.key}\n")
+                        f.write(f"    Snippet: {match.snippet}\n")
+                        f.write(f"    Context: {match.context}\n")
+                    f.write("-" * 80 + "\n")
+
+        return output_dir
+
+def validate_url(url: str) -> bool:
     try:
-        websites, depth, concurrency, output_format, discord_webhook = WebsiteScanner.get_user_input()
-        console.print(f"\n[bold cyan]Scanning {len(websites)} website(s) with recursive depth of {depth} and concurrency of {concurrency}...\n[/bold cyan]")
-        scanner = WebsiteScanner(depth=depth, concurrency=concurrency, output_format=output_format, discord_webhook=discord_webhook)
-        asyncio.run(scanner.scan_websites(websites))
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except Exception:
+        return False
+
+def get_user_input() -> Tuple[List[str], str, str]:
+    console.print(Panel.fit(
+        "[bold blue]Website Scanner[/bold blue]\n"
+        "A tool for scanning websites and their JavaScript files for sensitive information.",
+        title="Welcome",
+        border_style="blue"
+    ))
+
+    discord_webhook_url = Prompt.ask("Enter your Discord Webhook URL")
+
+    while True:
+        choice = Prompt.ask(
+            "How would you like to input websites?",
+            choices=["file", "single", "multiple"],
+            default="single"
+        )
+
+        websites = []
+        if choice == "file":
+            while True:
+                file_path = Prompt.ask("Enter the path to the file containing website URLs")
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        websites = [line.strip() for line in f if validate_url(line.strip())]
+                    if websites:
+                        break
+                    console.print("[red]No valid URLs found in the file.[/red]")
+                except FileNotFoundError:
+                    console.print("[red]File not found. Please check the path.[/red]")
+                except Exception as e:
+                    console.print(f"[red]Error reading file: {e}[/red]")
+        
+        elif choice == "single":
+            while True:
+                url = Prompt.ask("Enter the website URL (including http:// or https://)")
+                if validate_url(url):
+                    websites = [url]
+                    break
+                console.print("[red]Invalid URL format. Please include http:// or https://[/red]")
+        
+        else:  # multiple
+            console.print("Enter URLs one per line (press Enter twice when done):")
+            while True:
+                url = input()
+                if not url:
+                    break
+                if validate_url(url):
+                    websites.append(url)
+                else:
+                    console.print(f"[yellow]Skipping invalid URL: {url}[/yellow]")
+
+        if websites:
+            break
+        console.print("[red]No valid URLs provided. Please try again.[/red]")
+
+    output_format = Prompt.ask(
+        "Choose output format",
+        choices=["txt", "json", "both"],
+        default="both"
+    )
+
+    return websites, output_format, discord_webhook_url
+
+async def main():
+    try:
+        websites, output_format, discord_webhook_url = get_user_input()
+        
+        with Status("[bold blue]Initializing scanner...[/bold blue]"):
+            config_manager = ConfigManager()
+            scanner = WebsiteScanner(config_manager, discord_webhook_url)
+
+        console.print(f"\n[bold green]Starting scan of {len(websites)} website(s)[/bold green]")
+        console.print("Configuration:", style="blue")
+        console.print(f"  Depth: {config_manager.config['depth']}")
+        console.print(f"  Concurrency: {config_manager.config['concurrency']}")
+        console.print(f"  Timeout: {config_manager.config['timeout']} seconds")
+        console.print()
+
+        start_time = datetime.now()
+        await scanner.scan_websites(websites)
+        duration = datetime.now() - start_time
+
+        output_dir = scanner.save_results(output_format)
+
+        # Display summary
+        console.print("\n[bold green]Scan Complete![/bold green]")
+        console.print(f"Duration: {duration.total_seconds():.2f} seconds")
+        console.print(f"Websites scanned: {len(websites)}")
+        console.print(f"URLs visited: {len(scanner.visited_urls)}")
+        console.print(f"Matches found: {len(scanner.results)}")
+        console.print(f"\nResults saved to: {output_dir}")
+
+        if scanner.results:
+            if Confirm.ask("Would you like to see a summary of the findings?"):
+                table = Table(title="Scan Results Summary")
+                table.add_column("Website", style="cyan")
+                table.add_column("Source", style="blue")
+                table.add_column("Matches", style="red")
+
+                for result in scanner.results:
+                    table.add_row(
+                        result.website_url,
+                        result.js_url,
+                        str(len(result.matches))
+                    )
+
+                console.print(table)
+
     except KeyboardInterrupt:
-        console.print("\n[bold yellow]Scan aborted by the user.[/bold yellow]")
+        console.print("\n[yellow]Scan aborted by user.[/yellow]")
     except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
-        console.print(f"\n[bold red]An unexpected error occurred: {e}[/bold red]")
+        console.print(f"\n[red]An error occurred: {str(e)}[/red]")
+        logging.exception("Unexpected error during scan")
     finally:
-        console.print("[bold blue]Press Enter to exit.[/bold blue]")
-        try:
-            input()
-        except EOFError:
+        if Confirm.ask("Press Enter to exit"):
             pass
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
